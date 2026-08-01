@@ -15,7 +15,7 @@ This repository orchestrates customer interactions over valid, published product
 ## Boundaries
 
 - Own customer input state, selections, quantity resolution, browser-side customer-field validation, and `OrderSnapshot` construction.
-- Preserve intentional `eval` expressions as browser JavaScript authored by trusted hosts or administrators and tested through Studio.
+- Preserve intentional `eval` expressions as browser JavaScript authored by trusted hosts or administrators and tested through sibling `dgp-studio`.
 - Do not require backend or non-browser SDKs to execute browser JavaScript expressions.
 - Do not redesign, sandbox, remove, or silently change expression failure behavior without an explicit compatibility decision.
 - Validate customer-entered values, not product-definition coherence.
@@ -26,6 +26,6 @@ This repository orchestrates customer interactions over valid, published product
 ## References
 
 - Legacy ordering sources: `D:\Projects\GitHub\digital-service-ui-builder\src\react\hooks`, `src\react\inputs`, and `src\utils\build-order-snapshot`.
-- Current Studio and expression-authoring reference: `D:\Projects\GitHub\service-builder`.
+- Studio destination: sibling `../dgp-studio`; code and history migration source: `D:\Projects\GitHub\service-builder`.
 - Backend order authority: sibling `../dgp-sdk` at `D:\Projects\GitHub\elqora\digital-goods-protocol\dgp-sdk`.
-- Sibling repositories: `../dgp-spec`, `../dgp-core`, `../dgp-validation`, and `../dgp-workspace`.
+- Sibling repositories: `../dgp-spec`, `../dgp-core`, `../dgp-validation`, `../dgp-workspace`, and `../dgp-studio`.
