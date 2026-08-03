@@ -31,4 +31,4 @@ Repository scaffold only. Ordering extraction and migration will be planned sepa
 
 ## License
 
-GPL-3.0.
+GPL-3.0-only.

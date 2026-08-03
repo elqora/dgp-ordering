@@ -38,6 +38,14 @@ This repository orchestrates customer interactions over valid, published `Produc
 
 Consume canonical v1 definitions only. Do not add legacy snapshot builders, field aliases, adapters, deprecated fields, or compatibility modes. Legacy code and tests are behavioral evidence only.
 
+## Protocol lifecycle and operations
+
+- Ratified means the versioned schema, required fixtures, rationale, and stable status are merged into `dgp-spec/main`; released means that ratified Spec version is tagged and published.
+- Update Ordering only after Spec ratification, Core/SDK alignment, and affected Validation work. Commit and release this repository independently before releasing its Form Palette adapter.
+- Ordering may implement ratified unreleased contracts, but stable releases require the corresponding released Spec version.
+- This repository has no implementation manifest or operational commands yet. Do not invent install, test, lint, type-check, build, or generation commands.
+- When its toolchain is introduced, document all real commands, supported runtimes, generated-output policy, completion criteria, and checks preventing Validation, Form Palette, Studio, React, legacy-field, and generated-binding drift.
+
 ## References
 
 - Contract authority: sibling `../dgp-spec`; interpretation dependency: sibling `../dgp-core`.
@@ -47,4 +55,4 @@ Consume canonical v1 definitions only. Do not add legacy snapshot builders, fiel
 - Studio source evidence: `D:\Projects\GitHub\service-builder`; destination: sibling `../dgp-studio`.
 - Sibling: `../dgp-workspace`.
 
-This repository remains GPL-3.0.
+This repository remains GPL-3.0-only. Future manifests and source headers must use that exact SPDX identifier.
