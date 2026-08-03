@@ -9,12 +9,14 @@ This repository orchestrates customer interactions over valid, published product
 ## Dependencies
 
 - May depend on sibling `dgp-spec` and `dgp-core`.
-- Must not depend on `dgp-validation` or `dgp-workspace`.
+- Must not depend on `dgp-validation`, `dgp-ordering-form-palette`, `dgp-workspace`, or Form Palette.
 - Framework bindings must remain separable from headless ordering state and behavior.
 
 ## Boundaries
 
 - Own customer input state, selections, quantity resolution, browser-side customer-field validation, and `OrderSnapshot` construction.
+- Own neutral form-store, field-binding, input-registry, and component-adapter contracts that hosts can implement without Form Palette.
+- Do not own Form Palette hooks, `InputField` components, built-in Form Palette descriptors, or a Form Palette convenience provider; those belong to sibling `dgp-ordering-form-palette`.
 - Preserve intentional `eval` expressions as browser JavaScript authored by trusted hosts or administrators and tested through sibling `dgp-studio`.
 - Do not require backend or non-browser SDKs to execute browser JavaScript expressions.
 - Do not redesign, sandbox, remove, or silently change expression failure behavior without an explicit compatibility decision.
@@ -26,6 +28,7 @@ This repository orchestrates customer interactions over valid, published product
 ## References
 
 - Legacy ordering sources: `D:\Projects\GitHub\digital-service-ui-builder\src\react\hooks`, `src\react\inputs`, and `src\utils\build-order-snapshot`.
+- Legacy Form Palette-specific Wrapper, form bridge, and built-in descriptors migrate to sibling `../dgp-ordering-form-palette`, not this repository.
 - Studio destination: sibling `../dgp-studio`; code and history migration source: `D:\Projects\GitHub\service-builder`.
 - Backend order authority: sibling `../dgp-sdk` at `D:\Projects\GitHub\elqora\digital-goods-protocol\dgp-sdk`.
-- Sibling repositories: `../dgp-spec`, `../dgp-core`, `../dgp-validation`, `../dgp-workspace`, and `../dgp-studio`.
+- Sibling repositories: `../dgp-spec`, `../dgp-core`, `../dgp-validation`, `../dgp-ordering-form-palette`, `../dgp-workspace`, and `../dgp-studio`.
