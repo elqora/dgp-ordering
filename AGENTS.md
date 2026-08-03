@@ -40,7 +40,8 @@ Consume canonical v1 definitions only. Do not add legacy snapshot builders, fiel
 
 ## Protocol lifecycle and operations
 
-- Ratified means the versioned schema, required fixtures, rationale, and stable status are merged into `dgp-spec/main`; released means that ratified Spec version is tagged and published.
+- Spec owns shared representation, SDK owns backend pricing and fulfillment semantics, and the legacy engine supplies ordering behavior evidence to retain or improve. Ordering owns customer orchestration behavior without redefining shared contracts.
+- Ratified means the versioned plain TypeScript contract, required JSON fixtures, rationale, and stable status are merged into `dgp-spec/main`; generated JSON Schemas must also be current once tooling exists. Released means that ratified Spec version is tagged and published.
 - Update Ordering only after Spec ratification, Core/SDK alignment, and affected Validation work. Commit and release this repository independently before releasing its Form Palette adapter.
 - Ordering may implement ratified unreleased contracts, but stable releases require the corresponding released Spec version.
 - This repository has no implementation manifest or operational commands yet. Do not invent install, test, lint, type-check, build, or generation commands.
@@ -49,6 +50,7 @@ Consume canonical v1 definitions only. Do not add legacy snapshot builders, fiel
 ## References
 
 - Contract authority: sibling `../dgp-spec`; interpretation dependency: sibling `../dgp-core`.
+- Shared-contract guide: sibling `../dgp-spec/CONTRACTS.md`.
 - Backend authority for pricing and fulfillment: sibling `../dgp-sdk`.
 - Legacy ordering evidence: `D:\Projects\GitHub\digital-service-ui-builder\src\react\hooks`, `src\react\inputs`, and `src\utils\build-order-snapshot`.
 - Form Palette destination: sibling `../dgp-ordering-form-palette`.
