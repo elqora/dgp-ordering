@@ -4,31 +4,47 @@ Read and follow `../AGENTS.md` before working in this repository.
 
 ## Role
 
-This repository orchestrates customer interactions over valid, published product definitions and builds DGP order snapshots.
+This repository orchestrates customer interactions over valid, published `ProductDefinition` documents and constructs canonical `OrderSnapshot` payloads.
 
 ## Dependencies
 
 - May depend on sibling `dgp-spec` and `dgp-core`.
-- Must not depend on `dgp-validation`, `dgp-ordering-form-palette`, `dgp-workspace`, or Form Palette.
-- Framework bindings must remain separable from headless ordering state and behavior.
+- Must not depend on Validation, the Form Palette adapter, Workspace, Studio, Form Palette, or a host application.
+- Framework bindings must remain separable from headless ordering behavior.
 
-## Boundaries
+## Owned behavior
 
-- Own customer input state, selections, quantity resolution, browser-side customer-field validation, and `OrderSnapshot` construction.
-- Own neutral form-store, field-binding, input-registry, and component-adapter contracts that hosts can implement without Form Palette.
-- Do not own Form Palette hooks, `InputField` components, built-in Form Palette descriptors, or a Form Palette convenience provider; those belong to sibling `dgp-ordering-form-palette`.
-- Preserve intentional `eval` expressions as browser JavaScript authored by trusted hosts or administrators and tested through sibling `dgp-studio`.
-- Do not require backend or non-browser SDKs to execute browser JavaScript expressions.
-- Do not redesign, sandbox, remove, or silently change expression failure behavior without an explicit compatibility decision.
-- Validate customer-entered values, not product-definition coherence.
-- Do not expose visibility, rate-coherence, constraint, or publication diagnostics to customers.
-- Preserve the SDK's rate and charge model; do not treat catalog rate as a replacement pricing system.
-- Do not own Studio expression editors, previews, or publication-test UI.
+- Customer input state, selections, context-aware visibility integration, quantity resolution, customer-field validation, service resolution, and snapshot construction.
+- Neutral form-store, field-binding, input-registry, and component-adapter contracts that hosts can implement without Form Palette.
+- Exact browser utility calculations preserved from accepted behavior and serialized as advisory snapshot data.
+- An injectable expression-executor contract and a default browser JavaScript executor.
+
+## Expression contract
+
+- Quantity and customer-field expressions are trusted host-authored browser JavaScript function bodies with arguments and return contracts declared by Spec.
+- Do not require backend or non-browser SDKs to execute them.
+- Missing source, thrown exceptions, and invalid results produce structured host-configuration failures.
+- Do not construct or return a valid `OrderSnapshot` after an expression failure.
+- Hosts may replace the executor, but replacements must preserve the ratified inputs, outputs, and failure semantics.
+
+## Pricing and validation boundaries
+
+- Utility calculations and their exact snapshot results are advisory. They must never become authoritative rates, final prices, or charges.
+- SDK handlers validate submitted inputs and remain authoritative for rates, pricing, charges, and fulfillment.
+- Validate customer-entered values, not definition coherence. Ordering must not depend on `dgp-validation` or expose editorial diagnostics to customers.
+- Form Palette hooks, `InputField`, built-in descriptors, and convenience providers belong to sibling `dgp-ordering-form-palette`.
+
+## Clean-break rule
+
+Consume canonical v1 definitions only. Do not add legacy snapshot builders, field aliases, adapters, deprecated fields, or compatibility modes. Legacy code and tests are behavioral evidence only.
 
 ## References
 
-- Legacy ordering sources: `D:\Projects\GitHub\digital-service-ui-builder\src\react\hooks`, `src\react\inputs`, and `src\utils\build-order-snapshot`.
-- Legacy Form Palette-specific Wrapper, form bridge, and built-in descriptors migrate to sibling `../dgp-ordering-form-palette`, not this repository.
-- Studio destination: sibling `../dgp-studio`; code and history migration source: `D:\Projects\GitHub\service-builder`.
-- Backend order authority: sibling `../dgp-sdk` at `D:\Projects\GitHub\elqora\digital-goods-protocol\dgp-sdk`.
-- Sibling repositories: `../dgp-spec`, `../dgp-core`, `../dgp-validation`, `../dgp-ordering-form-palette`, `../dgp-workspace`, and `../dgp-studio`.
+- Contract authority: sibling `../dgp-spec`; interpretation dependency: sibling `../dgp-core`.
+- Backend authority for pricing and fulfillment: sibling `../dgp-sdk`.
+- Legacy ordering evidence: `D:\Projects\GitHub\digital-service-ui-builder\src\react\hooks`, `src\react\inputs`, and `src\utils\build-order-snapshot`.
+- Form Palette destination: sibling `../dgp-ordering-form-palette`.
+- Studio source evidence: `D:\Projects\GitHub\service-builder`; destination: sibling `../dgp-studio`.
+- Sibling: `../dgp-workspace`.
+
+This repository remains GPL-3.0.
