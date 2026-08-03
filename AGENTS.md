@@ -44,8 +44,8 @@ Consume canonical v1 definitions only. Do not add legacy snapshot builders, fiel
 - Ratified means the versioned plain TypeScript contract, required JSON fixtures, rationale, and stable status are merged into `dgp-spec/main`; generated JSON Schemas must also be current once tooling exists. Released means that ratified Spec version is tagged and published.
 - Update Ordering only after Spec ratification, Core/SDK alignment, and affected Validation work. Commit and release this repository independently before releasing its Form Palette adapter.
 - Ordering may implement ratified unreleased contracts, but stable releases require the corresponding released Spec version.
-- This repository has no implementation manifest or operational commands yet. Do not invent install, test, lint, type-check, build, or generation commands.
-- When its toolchain is introduced, document all real commands, supported runtimes, generated-output policy, completion criteria, and checks preventing Validation, Form Palette, Studio, React, legacy-field, and generated-binding drift.
+- The package supports Node.js 22 or newer. Use `npm install`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run check:boundaries`; `npm run check` is the repository completion command.
+- No generated outputs are committed. The completion gate must prevent Validation, Form Palette, Workspace, Studio, React, host-application, independently authored shared-contract, and dependency-boundary drift.
 
 ## References
 

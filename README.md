@@ -10,7 +10,7 @@ DGP Ordering is the customer-facing orchestration runtime for Digital Goods Prot
 - Quantity and service selection resolution
 - Order snapshot construction and hydration
 - Neutral form-store, field-binding, input-registry, and component-adapter contracts
-- Optional framework bindings that do not impose a particular form library
+- Framework-neutral host integration contracts; concrete bindings live in adapter packages
 
 DGP Ordering trusts the publication boundary. Definition coherence, visibility-cycle analysis, rate coherence, and other editorial diagnostics belong to DGP Validation and DGP Workspace.
 
@@ -25,9 +25,44 @@ DGP Ordering trusts the publication boundary. Definition coherence, visibility-c
 - [DGP SDK](https://github.com/elqora/dgp-sdk) consumes order snapshots for backend execution.
 - [Digital Service Engine](https://github.com/timeax/digital-service-engine) is the legacy migration source and behavioral reference.
 
-## Status
+## Runtime boundaries
 
-Repository scaffold only. Ordering extraction and migration will be planned separately.
+Ordering consumes already-published canonical definitions. It uses DGP Core for
+context and visibility, validates customer-entered values, resolves quantity and
+service evidence, and constructs canonical snapshots. It never performs
+publication validation or determines authoritative prices and charges.
+
+The default browser JavaScript expression executor runs trusted host-authored
+function bodies with the canonical `value` and `values` arguments. Hosts can
+inject a replacement executor. Missing, throwing, and invalid expressions return
+structured host-configuration failures and prevent snapshot construction.
+
+Utility calculations record their exact browser result as `advisory_amount`.
+Percent utilities use supplied advisory service amounts when present and otherwise
+use handler catalog rates; handlers must independently calculate final charges.
+The arithmetic is deterministic: flat uses `rate`, per-quantity uses
+`rate × quantity`, per-value uses `rate × resolved value`, and percent uses
+`base amount × rate ÷ 100`. The `all` percent base includes prior advisory
+utility lines in authored selection order.
+
+## Toolchain
+
+DGP Ordering supports Node.js 22 or newer and npm with the committed lockfile.
+
+```bash
+npm install
+npm run lint
+npm run typecheck
+npm test
+npm run check:boundaries
+npm run build
+npm run check
+```
+
+`npm run check` is the completion command. During coordinated development,
+sibling Spec and Core packages may be connected with `npm link`; stable releases
+replace those links with released semver dependencies and a registry-resolved
+lockfile.
 
 ## License
 
