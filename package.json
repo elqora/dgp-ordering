@@ -1,6 +1,6 @@
 {
   "name": "@elqora/dgp-ordering",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Headless customer ordering orchestration for the Digital Goods Protocol.",
   "license": "GPL-3.0-only",
   "type": "module",

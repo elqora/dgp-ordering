@@ -5,6 +5,7 @@ import { createProductInterpreter, type ResolvedProductContext } from "@elqora/d
 
 import { bindField, createFormStore, type FieldBinding, type FormStore, type OrderingInputState } from "./store.js";
 import { createInputRegistry, type InputRegistry } from "./registry.js";
+import { resolveOrderingSelection } from "./selection.js";
 
 export interface OrderingSession {
   readonly store: FormStore<OrderingInputState>;
@@ -37,29 +38,23 @@ export function createOrderingSession(
   const store = createFormStore(initial_state);
   let filterId = initial_filter_id;
   let explicitTriggerIds: string[] = [];
+  let activeTriggerIds: string[] = [];
   let priorEffects = new Map<string, ReturnType<typeof interpreter.resolveValueEffects>[number]>();
 
-  const selectedTriggerIds = (): string[] => unique([
-    ...explicitTriggerIds,
-    ...Object.values(store.get().selections).flat(),
-  ]);
-
   const reconcile = (): void => {
-    const triggerIds = selectedTriggerIds();
-    const visibility = interpreter.resolveVisibility(filterId, triggerIds);
-    const nextSelections: Record<string, string[]> = {};
-    for (const fieldId of visibility.fieldIds) {
-      const field = interpreter.index.getField(fieldId);
-      if (field === undefined) continue;
-      const allowed = new Set(visibility.optionsByFieldId[fieldId] ?? []);
-      let selected = (store.get().selections[fieldId] ?? []).filter((id) => allowed.has(id));
+    const requestedSelections: Record<string, string[]> = {};
+    for (const field of definition.fields) {
+      let selected = [...(store.get().selections[field.id] ?? [])];
       const cardinality = registry.resolve(field.type)?.cardinality;
       if (cardinality === "single") selected = selected.slice(0, 1);
       if (cardinality === "scalar") selected = [];
-      if (selected.length > 0) nextSelections[fieldId] = selected;
+      if (selected.length > 0) requestedSelections[field.id] = selected;
     }
+    const resolved = resolveOrderingSelection(definition, filterId, explicitTriggerIds, requestedSelections);
+    const nextSelections = resolved.selections;
+    activeTriggerIds = resolved.trigger_ids;
     const nextEffects = new Map(
-      interpreter.resolveValueEffects(filterId, unique([...explicitTriggerIds, ...Object.values(nextSelections).flat()]))
+      interpreter.resolveValueEffects(filterId, activeTriggerIds)
         .map((effect) => [`${effect.triggerId}\u0000${effect.targetFieldId}`, effect]),
     );
     const values = { ...store.get().values };
@@ -81,9 +76,9 @@ export function createOrderingSession(
     registry,
     get_filter_id: () => filterId,
     set_filter_id(next) { filterId = next; reconcile(); },
-    get_trigger_ids: selectedTriggerIds,
+    get_trigger_ids: () => [...activeTriggerIds],
     set_trigger_ids(next) { explicitTriggerIds = unique(next); reconcile(); },
-    get_context: () => interpreter.resolveContext(filterId, selectedTriggerIds()),
+    get_context: () => interpreter.resolveContext(filterId, activeTriggerIds),
     bind_field: (fieldId) => bindField(store, fieldId),
     set_value(fieldId, value) {
       const current = store.get();

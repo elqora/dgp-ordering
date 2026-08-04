@@ -2,6 +2,7 @@
 
 import type {
   HandlerService,
+  ExpressionHostConfigurationFailure,
   JsonValue,
   OrderSnapshot,
   OrderSnapshotMode,
@@ -16,6 +17,7 @@ import { createProductInterpreter } from "@elqora/dgp-core";
 import { validateCustomerInput, type CustomerInputIssue } from "./customer-validation.js";
 import { createBrowserJavaScriptExpressionExecutor, type ExpressionExecutor } from "./expression.js";
 import { resolveQuantity } from "./quantity.js";
+import { resolveOrderingSelection } from "./selection.js";
 import type { OrderingInputState } from "./store.js";
 
 export interface BuildOrderSnapshotOptions {
@@ -40,8 +42,33 @@ export type BuildOrderSnapshotResult =
   | {
       ok: false;
       kind: "host_configuration";
-      failure: import("@elqora/dgp-spec").ExpressionHostConfigurationFailure;
+      failure: OrderingHostConfigurationFailure;
     };
+
+export type OrderingHostConfigurationFailure = ExpressionHostConfigurationFailure | {
+  kind: "host_configuration";
+  code: "ordering_configuration_invalid";
+  path: string;
+  message: string;
+  meta: ExpressionHostConfigurationFailure["meta"];
+};
+
+function configurationFailure(path: string, message: string): BuildOrderSnapshotResult {
+  return { ok: false, kind: "host_configuration", failure: { kind: "host_configuration", code: "ordering_configuration_invalid", path, message, meta: {} } };
+}
+
+function isJsonSafe(value: unknown, active = new Set<object>()): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || active.has(value)) return false;
+  active.add(value);
+  const valid = Array.isArray(value)
+    ? value.every((entry) => isJsonSafe(entry, active))
+    : Object.getPrototypeOf(value) === Object.prototype
+      && Object.values(value as Record<string, unknown>).every((entry) => isJsonSafe(entry, active));
+  active.delete(value);
+  return valid;
+}
 
 function pushUnique(target: string[], seen: Set<string>, values: Iterable<string>): void {
   for (const value of values) if (!seen.has(value)) { seen.add(value); target.push(value); }
@@ -52,26 +79,13 @@ function normalizedContext(options: BuildOrderSnapshotOptions): {
   fieldIds: string[];
   selections: Record<string, string[]>;
 } {
-  const interpreter = createProductInterpreter(options.definition);
-  const provisional: string[] = [];
-  const seen = new Set<string>();
-  pushUnique(provisional, seen, options.trigger_ids ?? []);
-  for (const selected of Object.values(options.state.selections)) pushUnique(provisional, seen, selected);
-  const visibility = interpreter.resolveVisibility(options.filter_id, provisional);
-  const selections: Record<string, string[]> = {};
-  const selectedOptions: string[] = [];
-  for (const fieldId of visibility.fieldIds) {
-    const allowed = new Set(visibility.optionsByFieldId[fieldId] ?? []);
-    const selected = (options.state.selections[fieldId] ?? []).filter((id) => allowed.has(id));
-    if (selected.length > 0) selections[fieldId] = selected;
-    selectedOptions.push(...selected);
-  }
-  const triggerIds: string[] = [];
-  const finalSeen = new Set<string>();
-  pushUnique(triggerIds, finalSeen, options.trigger_ids ?? []);
-  pushUnique(triggerIds, finalSeen, selectedOptions);
-  const finalVisibility = interpreter.resolveVisibility(options.filter_id, triggerIds);
-  return { triggerIds, fieldIds: finalVisibility.fieldIds, selections };
+  const resolved = resolveOrderingSelection(
+    options.definition,
+    options.filter_id,
+    options.trigger_ids ?? [],
+    options.state.selections,
+  );
+  return { triggerIds: resolved.trigger_ids, fieldIds: resolved.visibility.fieldIds, selections: resolved.selections };
 }
 
 function nodeUtility(
@@ -97,6 +111,15 @@ function numericUtilityValue(value: JsonValue, valueBy: "value" | "length" | und
 function serviceKey(id: ServiceId): string { return String(id); }
 
 export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrderSnapshotResult {
+  const builtAt = options.built_at ?? new Date().toISOString();
+  if (!Number.isFinite(Date.parse(builtAt))) return configurationFailure("/built_at", "The snapshot build timestamp must be a valid date-time string.");
+  if (!Number.isFinite(options.host_quantity_default ?? 1)) return configurationFailure("/host_quantity_default", "The host quantity default must be finite.");
+  if (options.host_min !== undefined && !Number.isInteger(options.host_min)) return configurationFailure("/host_min", "The host minimum must be an integer.");
+  if (options.host_max !== undefined && !Number.isInteger(options.host_max)) return configurationFailure("/host_max", "The host maximum must be an integer.");
+  if (!isJsonSafe(options.meta ?? {})) return configurationFailure("/meta", "Snapshot meta must be JSON-compatible.");
+  if (Object.values(options.advisory_service_amounts ?? {}).some((amount) => !Number.isFinite(amount))) {
+    return configurationFailure("/advisory_service_amounts", "Advisory service amounts must be finite.");
+  }
   const interpreter = createProductInterpreter(options.definition);
   const executor = options.expression_executor ?? createBrowserJavaScriptExpressionExecutor();
   const context = normalizedContext(options);
@@ -170,6 +193,7 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
       : definition.mode === "per_quantity" ? definition.rate * quantity.quantity
         : definition.mode === "per_value" ? definition.rate * (value ?? 0)
           : (baseAmount ?? 0) * definition.rate / 100;
+    if (!Number.isFinite(amount)) return configurationFailure(`/utilities/${nodeId}`, "The advisory utility calculation produced a non-finite result.");
     utilities.push({
       node_id: nodeId,
       mode: definition.mode,
@@ -193,12 +217,17 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
   }
   const mins = chosen.map((service) => service.min);
   const maxes = chosen.map((service) => service.max);
+  const minimum = mins.length > 0 ? Math.min(...mins) : options.host_min ?? 1;
+  const maximum = maxes.length > 0 ? Math.max(...maxes) : options.host_max ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isInteger(minimum) || !Number.isInteger(maximum) || minimum > maximum) {
+    return configurationFailure("/min", "Resolved quantity bounds must be integers with min less than or equal to max.");
+  }
   return {
     ok: true,
     snapshot: {
       version: ORDER_SNAPSHOT_VERSION,
       mode: options.mode ?? "prod",
-      built_at: options.built_at ?? new Date().toISOString(),
+      built_at: builtAt,
       product_id: options.definition.id,
       definition_schema_version: options.definition.schema_version,
       selection: {
@@ -213,8 +242,8 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
       inputs: { form, selections: context.selections },
       quantity: quantity.quantity,
       quantity_source: quantity.source,
-      min: mins.length > 0 ? Math.min(...mins) : options.host_min ?? 1,
-      max: maxes.length > 0 ? Math.max(...maxes) : options.host_max ?? Number.MAX_SAFE_INTEGER,
+      min: minimum,
+      max: maximum,
       service_ids: serviceIds,
       service_ids_by_node: serviceIdsByNode,
       fallbacks: options.definition.fallbacks,

@@ -7,6 +7,7 @@ removing frontend pricing authority and Form Palette coupling.
 | --- | --- | --- |
 | Visible customer state | `src/utils/build-order-snapshot/inputs.ts`, React ordering hooks | Retain visible-field input and selection collection; use Core visibility and a framework-neutral store. |
 | Selection normalization | `selection.ts`, field input hooks | Retain deterministic option order and rejection of unavailable options; move cardinality into the host input registry instead of opaque product metadata. |
+| Hidden stale state | visibility and selection hooks | Redesign resolution as a reachable fixed point so selections owned by hidden fields cannot make themselves visible. |
 | Quantity | `quantity.ts` and snapshot quantity tests | Retain field rule, selected option, selected field, active filter, then host-default precedence. Expression failures no longer fall through silently. |
 | Customer validation | legacy field-validation functions | Retain customer rule operators for visible fields. Publication coherence diagnostics remain in Validation. |
 | Services | `services.ts` and service-map tests | Retain selected-node origins and filter fallback. Retire rate-based primary-service authority; preserve deterministic authored selection order. |

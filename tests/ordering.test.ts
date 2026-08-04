@@ -12,6 +12,7 @@ import {
   createOrderingSession,
   resolveQuantity,
   validateCustomerInput,
+  resolveOrderingSelection,
 } from "../src/index.js";
 
 const service: HandlerService = {
@@ -94,9 +95,37 @@ describe("trusted browser expressions", () => {
     expect(executor.execute({ language: "javascript", body: "throw new Error('bad')" }, { value: null, values: [] }, "/x")).toMatchObject({ ok: false, failure: { code: "expression_execution_failed" } });
     expect(executor.execute({ language: "javascript", body: "return undefined" }, { value: null, values: [] }, "/x")).toMatchObject({ ok: false, failure: { code: "expression_result_invalid" } });
   });
+
+  it("accepts repeated JSON references but rejects cycles", () => {
+    const executor = createBrowserJavaScriptExpressionExecutor();
+    expect(executor.execute(
+      { language: "javascript", body: "const shared = { ok: true }; return { left: shared, right: shared }" },
+      { value: null, values: [] },
+      "/x",
+    )).toMatchObject({ ok: true });
+    expect(executor.execute(
+      { language: "javascript", body: "const cycle = {}; cycle.self = cycle; return cycle" },
+      { value: null, values: [] },
+      "/x",
+    )).toMatchObject({ ok: false, failure: { code: "expression_result_invalid" } });
+  });
 });
 
 describe("customer ordering", () => {
+  it("does not let a stale hidden selection bootstrap its own visibility", () => {
+    const product = definition();
+    product.filters[0]!.excludes = ["hidden"];
+    product.fields.push({
+      id: "hidden", type: "choice", label: "Hidden", bind_id: "root",
+      options: [{ id: "stale", label: "Stale" }],
+    });
+    product.includes_for_buttons = { stale: ["hidden"] };
+    const resolved = resolveOrderingSelection(product, "root", [], { hidden: ["stale"] });
+    expect(resolved.trigger_ids).toEqual([]);
+    expect(resolved.selections).toEqual({});
+    expect(resolved.visibility.fieldIds).not.toContain("hidden");
+  });
+
   it("normalizes selections and applies then clears value effects", () => {
     const product = definition();
     product.value_effects_for_triggers = {
@@ -176,5 +205,18 @@ describe("customer ordering", () => {
     });
     expect(result).toMatchObject({ ok: false, kind: "host_configuration", failure: { code: "expression_result_invalid" } });
     expect("snapshot" in result).toBe(false);
+  });
+
+  it("refuses schema-invalid host snapshot configuration", () => {
+    expect(buildOrderSnapshot({
+      definition: definition(), filter_id: "root",
+      state: { values: { quantity: 5 }, selections: {} }, services: [service],
+      built_at: "not-a-date",
+    })).toMatchObject({ ok: false, kind: "host_configuration", failure: { code: "ordering_configuration_invalid", path: "/built_at" } });
+    expect(buildOrderSnapshot({
+      definition: definition(), filter_id: "root",
+      state: { values: { quantity: 5 }, selections: {} }, services: [],
+      host_min: 1.5,
+    })).toMatchObject({ ok: false, kind: "host_configuration", failure: { code: "ordering_configuration_invalid", path: "/host_min" } });
   });
 });

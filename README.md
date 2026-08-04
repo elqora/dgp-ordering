@@ -36,6 +36,10 @@ The default browser JavaScript expression executor runs trusted host-authored
 function bodies with the canonical `value` and `values` arguments. Hosts can
 inject a replacement executor. Missing, throwing, and invalid expressions return
 structured host-configuration failures and prevent snapshot construction.
+Selection resolution starts from fields visible without their own stale
+selection, so hidden option state cannot bootstrap itself back into the active
+context. Host timestamps, bounds, metadata, and advisory inputs are checked
+before construction so successful snapshots remain schema-valid.
 
 Utility calculations record their exact browser result as `advisory_amount`.
 Percent utilities use supplied advisory service amounts when present and otherwise
