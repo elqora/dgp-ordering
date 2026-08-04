@@ -36,7 +36,15 @@ This repository orchestrates customer interactions over valid, published `Produc
 
 ## Clean-break rule
 
-Consume canonical v1 definitions only. Do not add legacy snapshot builders, field aliases, adapters, deprecated fields, or compatibility modes. Legacy code and tests are behavioral evidence only.
+Consume canonical v1 definitions only. Do not add legacy snapshot builders, field aliases, adapters, deprecated fields, or compatibility modes. This representation clean break does not permit reduced customer-order behavior; legacy code and tests remain binding behavioral evidence by default.
+
+## Migration completeness
+
+- Preserve proven behavior for default-value hydration, customer state, selection normalization, visible and hidden state, validation rules, quantity precedence, expressions, service evidence, field- and option-level utilities, bounds, fallbacks, and complete `OrderSnapshot` construction.
+- Expression arguments, argument ordering, return handling, and failures are observable behavior. Any change requires explicit recorded user approval followed by Spec ratification; do not infer new semantics locally.
+- Preserve advisory calculations exactly while keeping SDK handlers authoritative for final rates, prices, charges, and fulfillment.
+- Port or replace the applicable legacy order-flow and snapshot tests, including contextual, recursive-option, stale-state, default-value, utility, and expression cases.
+- Mark missing behavior as **pending migration**. Do not call Ordering complete or publish another stable release based only on a neutral store, one snapshot path, boundary checks, or happy-path tests.
 
 ## Protocol lifecycle and operations
 
@@ -45,7 +53,7 @@ Consume canonical v1 definitions only. Do not add legacy snapshot builders, fiel
 - Update Ordering only after Spec ratification, Core/SDK alignment, and affected Validation work. Commit and release this repository independently before releasing its Form Palette adapter.
 - Ordering may implement ratified unreleased contracts, but stable releases require the corresponding released Spec version.
 - The package supports Node.js 22 or newer. Use `npm install`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run check:boundaries`; `npm run check` is the repository completion command.
-- No generated outputs are committed. The completion gate must prevent Validation, Form Palette, Workspace, Studio, React, host-application, independently authored shared-contract, and dependency-boundary drift.
+- No generated outputs are committed. The verification gate must prevent Validation, Form Palette, Workspace, Studio, React, host-application, independently authored shared-contract, and dependency-boundary drift; passing it does not establish migration completeness.
 
 ## References
 
