@@ -8,22 +8,26 @@ export type InputCardinality = "scalar" | "single" | "multiple";
 
 export interface InputDescriptor {
   type: string;
+  variant?: string;
   cardinality: InputCardinality;
+  options?: boolean;
+  recursive_options?: boolean;
 }
 
 export interface InputRegistry {
   register(descriptor: InputDescriptor): void;
-  resolve(type: string): InputDescriptor | undefined;
+  resolve(type: string, variant?: string): InputDescriptor | undefined;
 }
 
 export function createInputRegistry(initial: readonly InputDescriptor[] = []): InputRegistry {
-  const descriptors = new Map(initial.map((descriptor) => [descriptor.type, descriptor]));
+  const key = (type: string, variant: string): string => `${type}\u0000${variant}`;
+  const descriptors = new Map(initial.map((descriptor) => [key(descriptor.type, descriptor.variant ?? "default"), descriptor]));
   return {
     register(descriptor) {
-      descriptors.set(descriptor.type, descriptor);
+      descriptors.set(key(descriptor.type, descriptor.variant ?? "default"), descriptor);
     },
-    resolve(type) {
-      return descriptors.get(type);
+    resolve(type, variant = "default") {
+      return descriptors.get(key(type, variant)) ?? descriptors.get(key(type, "default"));
     },
   };
 }

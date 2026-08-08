@@ -8,11 +8,12 @@ import type {
   OrderSnapshotMode,
   OrderSnapshotUtility,
   ProductDefinition,
+  ProductField,
   ServiceId,
   UtilityDefinition,
 } from "@elqora/dgp-spec";
 import { ORDER_SNAPSHOT_VERSION } from "@elqora/dgp-spec";
-import { createProductInterpreter } from "@elqora/dgp-core";
+import { createProductInterpreter, walkFieldOptions } from "@elqora/dgp-core";
 
 import { validateCustomerInput, type CustomerInputIssue } from "./customer-validation.js";
 import { createBrowserJavaScriptExpressionExecutor, type ExpressionExecutor } from "./expression.js";
@@ -84,6 +85,7 @@ function normalizedContext(options: BuildOrderSnapshotOptions): {
     options.filter_id,
     options.trigger_ids ?? [],
     options.state.selections,
+    { mode: options.mode ?? "prod" },
   );
   return { triggerIds: resolved.trigger_ids, fieldIds: resolved.visibility.fieldIds, selections: resolved.selections };
 }
@@ -98,8 +100,24 @@ function nodeUtility(
   return undefined;
 }
 
+function effectivePricingRole(
+  interpreter: ReturnType<typeof createProductInterpreter>,
+  nodeId: string,
+): "base" | "utility" {
+  const node = interpreter.index.getNode(nodeId);
+  if (node.kind === "field") return node.field.pricing_role ?? "base";
+  if (node.kind === "option") return node.option.pricing_role ?? node.field.pricing_role ?? "base";
+  return "base";
+}
+
+function isServiceSelector(field: ProductField): boolean {
+  return (field.button === true && field.service_id !== undefined)
+    || walkFieldOptions(field).some(({ option }) => option.service_id !== undefined);
+}
+
 function numericUtilityValue(value: JsonValue, valueBy: "value" | "length" | undefined): number | undefined {
   if (valueBy === "length") return typeof value === "string" || Array.isArray(value) ? value.length : undefined;
+  if (Array.isArray(value)) return numericUtilityValue(value[0] ?? null, "value");
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.trim() !== "") {
     const parsed = Number(value);
@@ -110,10 +128,17 @@ function numericUtilityValue(value: JsonValue, valueBy: "value" | "length" | und
 
 function serviceKey(id: ServiceId): string { return String(id); }
 
+function isDateTime(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/.test(value)
+    && Number.isFinite(Date.parse(value));
+}
+
 export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrderSnapshotResult {
   const builtAt = options.built_at ?? new Date().toISOString();
-  if (!Number.isFinite(Date.parse(builtAt))) return configurationFailure("/built_at", "The snapshot build timestamp must be a valid date-time string.");
-  if (!Number.isFinite(options.host_quantity_default ?? 1)) return configurationFailure("/host_quantity_default", "The host quantity default must be finite.");
+  if (!isDateTime(builtAt)) return configurationFailure("/built_at", "The snapshot build timestamp must be a valid date-time string.");
+  if (!Number.isFinite(options.host_quantity_default ?? 1) || (options.host_quantity_default ?? 1) <= 0) {
+    return configurationFailure("/host_quantity_default", "The host quantity default must be finite and greater than zero.");
+  }
   if (options.host_min !== undefined && !Number.isInteger(options.host_min)) return configurationFailure("/host_min", "The host minimum must be an integer.");
   if (options.host_max !== undefined && !Number.isInteger(options.host_max)) return configurationFailure("/host_max", "The host maximum must be an integer.");
   if (!isJsonSafe(options.meta ?? {})) return configurationFailure("/meta", "Snapshot meta must be JSON-compatible.");
@@ -121,9 +146,19 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
     return configurationFailure("/advisory_service_amounts", "Advisory service amounts must be finite.");
   }
   const interpreter = createProductInterpreter(options.definition);
+  if (interpreter.index.getFilter(options.filter_id) === undefined) {
+    return configurationFailure("/filter_id", "The active filter must exist in the published definition.");
+  }
   const executor = options.expression_executor ?? createBrowserJavaScriptExpressionExecutor();
   const context = normalizedContext(options);
-  const customer = validateCustomerInput(options.definition, options.filter_id, options.state, context.triggerIds, executor);
+  const customer = validateCustomerInput(
+    options.definition,
+    options.filter_id,
+    options.state,
+    context.triggerIds,
+    executor,
+    options.mode ?? "prod",
+  );
   if (!customer.ok) {
     return customer.kind === "host_configuration"
       ? { ok: false, kind: customer.kind, failure: customer.failure }
@@ -142,18 +177,26 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
   const selectedNodes: string[] = [];
   const selectedSeen = new Set<string>();
   pushUnique(selectedNodes, selectedSeen, context.triggerIds);
-  const serviceIds: ServiceId[] = [];
-  const serviceSeen = new Set<string>();
+  const selectedServices: Array<{ id: ServiceId; nodeId: string; index: number; rate: number }> = [];
   const serviceIdsByNode: Record<string, ServiceId[]> = {};
-  for (const nodeId of selectedNodes) {
-    const node = interpreter.index.getNode(nodeId);
-    const pricingRole = node.kind === "field" ? node.field.pricing_role : node.kind === "option" ? node.option.pricing_role : undefined;
-    if (pricingRole === "utility" || nodeUtility(interpreter, nodeId) !== undefined) continue;
+  const catalog = new Map(options.services.map((service) => [serviceKey(service.id), service]));
+  for (const [index, nodeId] of selectedNodes.entries()) {
+    if (effectivePricingRole(interpreter, nodeId) === "utility" || nodeUtility(interpreter, nodeId) !== undefined) continue;
     const serviceId = interpreter.serviceBindingForNode(nodeId);
     if (serviceId === undefined) continue;
     serviceIdsByNode[nodeId] = [serviceId];
-    const key = serviceKey(serviceId);
-    if (!serviceSeen.has(key)) { serviceSeen.add(key); serviceIds.push(serviceId); }
+    const rate = catalog.get(serviceKey(serviceId))?.rate;
+    selectedServices.push({ id: serviceId, nodeId, index, rate: rate === null || rate === undefined ? Number.NEGATIVE_INFINITY : rate });
+  }
+  const serviceIds: ServiceId[] = [];
+  const serviceSeen = new Set<string>();
+  if (selectedServices.length > 0) {
+    let primary = selectedServices[0]!;
+    for (const candidate of selectedServices.slice(1)) if (candidate.rate > primary.rate) primary = candidate;
+    for (const selected of [primary, ...selectedServices.filter((candidate) => candidate !== primary).sort((a, b) => a.index - b.index)]) {
+      const key = serviceKey(selected.id);
+      if (!serviceSeen.has(key)) { serviceSeen.add(key); serviceIds.push(selected.id); }
+    }
   }
   if (serviceIds.length === 0) {
     const serviceId = interpreter.serviceBindingForNode(options.filter_id);
@@ -163,17 +206,30 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
     }
   }
 
-  const catalog = new Map(options.services.map((service) => [serviceKey(service.id), service]));
   const chosen = serviceIds.map((id) => catalog.get(serviceKey(id))).filter((service): service is HandlerService => service !== undefined);
   const baseAmounts = serviceIds.map((id) => options.advisory_service_amounts?.[serviceKey(id)] ?? catalog.get(serviceKey(id))?.rate ?? 0);
   const serviceTotal = baseAmounts.reduce((sum, value) => sum + value, 0);
   const utilities: OrderSnapshotUtility[] = [];
-  for (const nodeId of selectedNodes) {
+  const utilityNodeIds: string[] = [];
+  const utilitySeen = new Set<string>();
+  for (const fieldId of context.fieldIds) {
+    const field = interpreter.index.getField(fieldId);
+    if (field?.utility !== undefined && (field.pricing_role ?? "base") === "utility") {
+      pushUnique(utilityNodeIds, utilitySeen, [fieldId]);
+    }
+    for (const optionId of context.selections[fieldId] ?? []) {
+      if (effectivePricingRole(interpreter, optionId) === "utility" && nodeUtility(interpreter, optionId) !== undefined) {
+        pushUnique(utilityNodeIds, utilitySeen, [optionId]);
+      }
+    }
+  }
+  for (const nodeId of utilityNodeIds) {
     const resolved = nodeUtility(interpreter, nodeId);
     if (resolved === undefined) continue;
     const definition = resolved.utility;
     const raw = resolved.fieldId === undefined ? null : options.state.values[resolved.fieldId] ?? null;
-    const value = definition.mode === "per_value" ? numericUtilityValue(raw, definition.value_by) : undefined;
+    const valueBy = definition.mode === "per_value" ? definition.value_by ?? "value" : undefined;
+    const value = definition.mode === "per_value" ? numericUtilityValue(raw, valueBy) : undefined;
     if (definition.mode === "per_value" && value === undefined) {
       return {
         ok: false,
@@ -203,7 +259,7 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
       inputs: {
         quantity: quantity.quantity,
         value: value ?? null,
-        value_by: definition.value_by ?? null,
+        value_by: valueBy ?? null,
         base_amount: baseAmount,
       },
       advisory_amount: amount,
@@ -213,7 +269,10 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
   const form: Record<string, JsonValue> = {};
   for (const fieldId of context.fieldIds) {
     const field = interpreter.index.getField(fieldId);
-    if (field?.name !== undefined && field.button !== true) form[field.name] = options.state.values[fieldId] ?? null;
+    if (field?.name !== undefined && field.button !== true && !isServiceSelector(field)) {
+      const value = options.state.values[fieldId];
+      if (value !== undefined) form[field.name] = value;
+    }
   }
   const mins = chosen.map((service) => service.min);
   const maxes = chosen.map((service) => service.max);

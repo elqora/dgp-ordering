@@ -50,6 +50,7 @@ function definition(): ProductDefinition {
         type: "choice",
         label: "Package",
         bind_id: "root",
+        multiple: true,
         options: [
           { id: "premium", label: "Premium", service_id: 101 },
           {
@@ -133,10 +134,10 @@ describe("customer ordering", () => {
         quantity: { value: 7, mode: "always", clear_on_deactivate: true },
       },
     };
-    const registry = createInputRegistry([{ type: "choice", cardinality: "single" }]);
+    const registry = createInputRegistry([{ type: "choice", cardinality: "multiple" }]);
     const session = createOrderingSession(product, "root", { values: {}, selections: {} }, registry);
     session.set_selected_option_ids("package", ["premium", "rush"]);
-    expect(session.store.get()).toMatchObject({ values: { quantity: 7 }, selections: { package: ["premium"] } });
+    expect(session.store.get()).toMatchObject({ values: { quantity: 7 }, selections: { package: ["premium", "rush"] } });
     session.set_selected_option_ids("package", []);
     expect(session.store.get().values.quantity).toBeNull();
     expect(session.get_context()?.visibility.fieldIds).toEqual(["quantity", "package"]);

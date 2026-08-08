@@ -9,6 +9,10 @@ export interface ResolvedOrderingSelection {
   visibility: ResolvedVisibility;
 }
 
+export interface ResolveOrderingSelectionOptions {
+  mode?: "prod" | "dev";
+}
+
 function same(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -19,6 +23,7 @@ export function resolveOrderingSelection(
   filterId: string,
   explicitTriggerIds: readonly string[],
   requestedSelections: Readonly<Record<string, readonly string[]>>,
+  options: ResolveOrderingSelectionOptions = {},
 ): ResolvedOrderingSelection {
   const interpreter = createProductInterpreter(definition);
   const requestedExplicit = [...new Set(explicitTriggerIds)];
@@ -33,21 +38,34 @@ export function resolveOrderingSelection(
     const nextSelections: Record<string, string[]> = {};
     const nextTriggers: string[] = [];
     const seen = new Set<string>();
+    const explicitOptionsByField = new Map<string, string[]>();
     const add = (id: string): void => { if (!seen.has(id)) { seen.add(id); nextTriggers.push(id); } };
 
     for (const triggerId of requestedExplicit) {
       if (rejected.has(triggerId)) continue;
       const owner = interpreter.index.getOptionOwner(triggerId);
       const field = interpreter.index.getField(triggerId);
-      const ownerId = owner?.id ?? (field?.button === true ? field.id : undefined);
-      if (ownerId !== undefined && visibleFields.has(ownerId)) add(triggerId);
+      if (owner !== undefined && visibleFields.has(owner.id)
+        && (visibility.optionsByFieldId[owner.id] ?? []).includes(triggerId)) {
+        const selected = explicitOptionsByField.get(owner.id) ?? [];
+        selected.push(triggerId);
+        explicitOptionsByField.set(owner.id, selected);
+        add(triggerId);
+      } else if (field?.button === true && visibleFields.has(field.id)) add(triggerId);
       else if (triggerIds.includes(triggerId)) rejected.add(triggerId);
     }
 
     for (const fieldId of visibility.fieldIds) {
+      const field = interpreter.index.getField(fieldId);
       const allowed = new Set(visibility.optionsByFieldId[fieldId] ?? []);
-      const selected = [...new Set(requestedSelections[fieldId] ?? [])]
+      let selected = [...new Set([
+        ...(requestedSelections[fieldId] ?? []),
+        ...(explicitOptionsByField.get(fieldId) ?? []),
+      ])]
         .filter((id) => !rejected.has(id) && allowed.has(id));
+      if (options.mode !== "dev" && field?.multiple !== true && selected.length > 1) {
+        selected = selected.slice(-1);
+      }
       for (const previous of selections[fieldId] ?? []) if (!selected.includes(previous)) rejected.add(previous);
       if (selected.length > 0) nextSelections[fieldId] = selected;
       for (const id of selected) add(id);

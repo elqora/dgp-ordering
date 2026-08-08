@@ -40,6 +40,9 @@ Selection resolution starts from fields visible without their own stale
 selection, so hidden option state cannot bootstrap itself back into the active
 context. Host timestamps, bounds, metadata, and advisory inputs are checked
 before construction so successful snapshots remain schema-valid.
+Fresh sessions hydrate canonical field defaults, while snapshot-backed sessions
+restore form values by canonical field name and do not overwrite hydrated state
+with those defaults.
 
 Utility calculations record their exact browser result as `advisory_amount`.
 Percent utilities use supplied advisory service amounts when present and otherwise
@@ -63,10 +66,9 @@ npm run build
 npm run check
 ```
 
-`npm run check` is the completion command. During coordinated development,
-sibling Spec and Core packages may be connected with `npm link`; stable releases
-replace those links with released semver dependencies and a registry-resolved
-lockfile.
+`npm run check` is the mechanical repository gate. During coordinated development,
+ratified unreleased Spec and Core revisions are pinned by commit; stable releases
+replace those pins with released versions and a registry-resolved lockfile.
 
 ## License
 

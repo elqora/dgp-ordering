@@ -41,12 +41,14 @@
     "prepack": "npm run check"
   },
   "dependencies": {
-    "@elqora/dgp-core": "^1.0.0",
-    "@elqora/dgp-spec": "^1.2.0"
+    "@elqora/dgp-core": "github:elqora/dgp-core#bb06a70",
+    "@elqora/dgp-spec": "github:elqora/dgp-spec#de710c0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "^24.10.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "eslint": "10.0.1",
     "globals": "^16.5.0",
     "typescript": "5.9.3",

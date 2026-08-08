@@ -4,11 +4,13 @@ import type {
   ExpressionHostConfigurationFailure,
   FieldValidationRule,
   JsonValue,
+  OrderSnapshotMode,
   ProductDefinition,
 } from "@elqora/dgp-spec";
 import { createProductInterpreter } from "@elqora/dgp-core";
 
-import type { ExpressionExecutor } from "./expression.js";
+import { normalizeExpressionInput, type ExpressionExecutor } from "./expression.js";
+import { resolveOrderingSelection } from "./selection.js";
 import type { OrderingInputState } from "./store.js";
 
 export interface CustomerInputIssue {
@@ -24,18 +26,28 @@ export type CustomerValidationResult =
   | { ok: false; kind: "host_configuration"; failure: ExpressionHostConfigurationFailure };
 
 function equal(left: JsonValue, right: JsonValue): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => equal(value, right[index]!));
+  }
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.hasOwn(right, key) && equal(left[key]!, right[key]!));
 }
 
 function testRule(actual: JsonValue, rule: FieldValidationRule): boolean {
   switch (rule.op) {
     case "eq": return rule.value !== undefined && equal(actual, rule.value);
     case "neq": return rule.value !== undefined && !equal(actual, rule.value);
-    case "gt": return typeof actual === "number" && typeof rule.value === "number" && actual > rule.value;
-    case "gte": return typeof actual === "number" && typeof rule.value === "number" && actual >= rule.value;
-    case "lt": return typeof actual === "number" && typeof rule.value === "number" && actual < rule.value;
-    case "lte": return typeof actual === "number" && typeof rule.value === "number" && actual <= rule.value;
-    case "between": return typeof actual === "number" && rule.min !== undefined && rule.max !== undefined && actual >= rule.min && actual <= rule.max;
+    case "gt": return rule.value !== undefined && Number(actual) > Number(rule.value);
+    case "gte": return rule.value !== undefined && Number(actual) >= Number(rule.value);
+    case "lt": return rule.value !== undefined && Number(actual) < Number(rule.value);
+    case "lte": return rule.value !== undefined && Number(actual) <= Number(rule.value);
+    case "between": return rule.min !== undefined && rule.max !== undefined
+      && Number(actual) >= rule.min && Number(actual) <= rule.max;
     case "in": return rule.values?.some((value) => equal(actual, value)) === true;
     case "nin": return rule.values?.every((value) => !equal(actual, value)) === true;
     case "truthy": return Boolean(actual);
@@ -59,23 +71,30 @@ export function validateCustomerInput(
   state: Readonly<OrderingInputState>,
   selectedTriggerIds: readonly string[],
   executor: ExpressionExecutor,
+  mode: OrderSnapshotMode = "prod",
 ): CustomerValidationResult {
   const interpreter = createProductInterpreter(definition);
-  const visibility = interpreter.resolveVisibility(filterId, selectedTriggerIds);
+  const context = resolveOrderingSelection(definition, filterId, selectedTriggerIds, state.selections, { mode });
+  const visibility = context.visibility;
   const issues: CustomerInputIssue[] = [];
   for (const fieldId of visibility.fieldIds) {
     const field = interpreter.index.getField(fieldId);
     if (field === undefined) continue;
     const value = state.values[fieldId] ?? null;
-    const selected = state.selections[fieldId] ?? [];
+    const selected = context.selections[fieldId] ?? [];
     if (field.required === true && missing(value, selected)) {
       issues.push({ field_id: fieldId, code: "required", message: `${field.label} is required.`, rule_index: null });
+      continue;
     }
     for (const [index, rule] of (field.validation ?? []).entries()) {
       let actual: JsonValue = value;
       if (rule.value_by === "length") actual = typeof value === "string" || Array.isArray(value) ? value.length : 0;
       if (rule.value_by === "eval") {
-        const execution = executor.execute(rule.expression, { value, values: Object.values(state.values) }, `/fields/${fieldId}/validation/${index}/expression`);
+        const execution = executor.execute(
+          rule.expression,
+          normalizeExpressionInput(state.values[fieldId]),
+          `/fields/${fieldId}/validation/${index}/expression`,
+        );
         if (!execution.ok) return { ok: false, kind: "host_configuration", failure: execution.failure };
         actual = execution.value;
       }
@@ -86,6 +105,7 @@ export function validateCustomerInput(
           message: rule.message ?? `${field.label} is invalid.`,
           rule_index: index,
         });
+        break;
       }
     }
   }

@@ -19,6 +19,13 @@ export interface ExpressionExecutor {
   ): ExpressionResult;
 }
 
+/** Normalize one field's raw input to the exact Spec-owned expression arguments. */
+export function normalizeExpressionInput(raw: JsonValue | undefined): BrowserJavaScriptExpressionInput {
+  if (raw === undefined) return { value: null, values: [] };
+  if (Array.isArray(raw)) return { value: raw[0] ?? null, values: [...raw] };
+  return { value: raw, values: [raw] };
+}
+
 function failure(
   code: ExpressionHostConfigurationFailure["code"],
   path: string,
@@ -52,7 +59,7 @@ export function createBrowserJavaScriptExpressionExecutor(): ExpressionExecutor 
         const evaluate = Function(
           "value",
           "values",
-          `"use strict";\n${expression.body}`,
+          expression.body,
         ) as (value: JsonValue, values: JsonValue[]) => unknown;
         const value = evaluate(input.value, input.values);
         if (!isJsonValue(value)) {
