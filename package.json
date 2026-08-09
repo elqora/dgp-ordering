@@ -38,6 +38,7 @@
     "test": "vitest run",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check": "npm run lint && npm run typecheck && npm run test && npm run check:boundaries && npm run build",
+    "prepare": "npm run build",
     "prepack": "npm run check"
   },
   "dependencies": {
