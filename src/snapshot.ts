@@ -35,6 +35,20 @@ export interface BuildOrderSnapshotOptions {
   meta?: OrderSnapshot["meta"];
   expression_executor?: ExpressionExecutor;
   advisory_service_amounts?: Readonly<Record<string, number>>;
+  advisory_service_amounts_for_quantity?: (context: AdvisoryServiceAmountContext) => Readonly<Record<string, number>>;
+}
+
+export interface AdvisoryServiceAmountContext {
+  quantity: number;
+  service_ids: readonly ServiceId[];
+  services: readonly HandlerService[];
+}
+
+export interface AdvisoryPricingPreview {
+  service_amounts: Record<string, number>;
+  base_amount: number;
+  utility_amount: number | null;
+  total_amount: number | null;
 }
 
 export type BuildOrderSnapshotResult =
@@ -49,7 +63,7 @@ export type BuildOrderSnapshotResult =
 export type OrderPreviewUtility = Omit<OrderSnapshotUtility, "advisory_amount"> & { advisory_amount: number | null };
 export type OrderPreview = Omit<OrderSnapshot, "utilities"> & { utilities: OrderPreviewUtility[] };
 export type BuildOrderPreviewResult =
-  | { ok: true; preview: OrderPreview; snapshot: OrderSnapshot | null; issues: CustomerInputIssue[]; can_submit: boolean }
+  | { ok: true; preview: OrderPreview; snapshot: OrderSnapshot | null; pricing: AdvisoryPricingPreview; issues: CustomerInputIssue[]; can_submit: boolean }
   | { ok: false; kind: "host_configuration"; failure: OrderingHostConfigurationFailure };
 
 export type OrderingHostConfigurationFailure = ExpressionHostConfigurationFailure | {
@@ -151,6 +165,9 @@ export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrde
   if (Object.values(options.advisory_service_amounts ?? {}).some((amount) => !Number.isFinite(amount))) {
     return configurationFailure("/advisory_service_amounts", "Advisory service amounts must be finite.");
   }
+  if (options.advisory_service_amounts !== undefined && options.advisory_service_amounts_for_quantity !== undefined) {
+    return configurationFailure("/advisory_service_amounts", "Static and quantity-aware advisory service amounts cannot both be supplied.");
+  }
   const interpreter = createProductInterpreter(options.definition);
   if (interpreter.index.getFilter(options.filter_id) === undefined) {
     return configurationFailure("/filter_id", "The active filter must exist in the published definition.");
@@ -212,8 +229,26 @@ export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrde
   }
 
   const chosen = serviceIds.map((id) => catalog.get(serviceKey(id))).filter((service): service is HandlerService => service !== undefined);
-  const baseAmounts = serviceIds.map((id) => options.advisory_service_amounts?.[serviceKey(id)] ?? catalog.get(serviceKey(id))?.rate ?? 0);
+  let advisoryServiceAmounts = options.advisory_service_amounts;
+  if (options.advisory_service_amounts_for_quantity !== undefined) {
+    try {
+      advisoryServiceAmounts = options.advisory_service_amounts_for_quantity({
+        quantity: quantity.quantity,
+        service_ids: serviceIds,
+        services: options.services,
+      });
+    } catch {
+      return configurationFailure("/advisory_service_amounts_for_quantity", "The quantity-aware advisory service amount resolver failed.");
+    }
+    if (advisoryServiceAmounts === null || typeof advisoryServiceAmounts !== "object" || Array.isArray(advisoryServiceAmounts)
+      || Object.values(advisoryServiceAmounts).some((amount) => !Number.isFinite(amount))
+      || serviceIds.some((id) => !Object.hasOwn(advisoryServiceAmounts!, serviceKey(id)))) {
+      return configurationFailure("/advisory_service_amounts_for_quantity", "The resolver must provide a finite amount for every selected service.");
+    }
+  }
+  const baseAmounts = serviceIds.map((id) => advisoryServiceAmounts?.[serviceKey(id)] ?? catalog.get(serviceKey(id))?.rate ?? 0);
   const serviceTotal = baseAmounts.reduce((sum, value) => sum + value, 0);
+  if (!Number.isFinite(serviceTotal)) return configurationFailure("/advisory_service_amounts", "The advisory service total must be finite.");
   const utilities: OrderPreviewUtility[] = [];
   const utilityNodeIds: string[] = [];
   const utilitySeen = new Set<string>();
@@ -316,10 +351,19 @@ export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrde
   const snapshot: OrderSnapshot | null = utilities.every((utility) => utility.advisory_amount !== null)
     ? { ...preview, utilities: utilities as OrderSnapshotUtility[] }
     : null;
+  const utilityAmount = snapshot === null ? null : utilities.reduce((sum, utility) => sum + (utility.advisory_amount ?? 0), 0);
+  const totalAmount = utilityAmount === null ? null : serviceTotal + utilityAmount;
+  if (totalAmount !== null && !Number.isFinite(totalAmount)) return configurationFailure("/advisory_service_amounts", "The advisory total must be finite.");
   return {
     ok: true,
     preview,
     snapshot,
+    pricing: {
+      service_amounts: Object.fromEntries(serviceIds.map((id, index) => [serviceKey(id), baseAmounts[index]!])),
+      base_amount: serviceTotal,
+      utility_amount: utilityAmount,
+      total_amount: totalAmount,
+    },
     issues,
     can_submit: issues.length === 0 && snapshot !== null,
   };

@@ -212,6 +212,54 @@ describe("customer ordering", () => {
       .toMatchObject({ ok: true, can_submit: true });
   });
 
+  it("uses quantity-aware primary service amounts throughout advisory pricing", () => {
+    const product = definition();
+    product.fields.push(
+      { id: "target", type: "text", label: "Target", name: "target", bind_id: "root", required: true },
+      { id: "base_percent", type: "number", label: "Base percent", bind_id: "root", pricing_role: "utility", utility: { mode: "percent", rate: 10, percent_base: "base_service" } },
+      { id: "all_percent", type: "number", label: "All percent", bind_id: "root", pricing_role: "utility", utility: { mode: "percent", rate: 10, percent_base: "all" } },
+    );
+    product.fields[1]!.options!.push({ id: "faster", label: "Faster", service_id: 102 });
+    const faster = { ...service, id: 102, rate: 30 };
+    const options = {
+      definition: product, filter_id: "root", services: [service, faster],
+      state: { values: { quantity: 5 }, selections: { package: ["premium", "faster", "rush"] } },
+      advisory_service_amounts_for_quantity: ({ quantity, service_ids, services }: {
+        quantity: number; service_ids: readonly (string | number)[]; services: readonly HandlerService[];
+      }) => Object.fromEntries(service_ids.map((id, index) => [
+        String(id), index === 0 ? (services.find((entry) => String(entry.id) === String(id))?.rate ?? 0) * quantity : 0,
+      ])),
+    };
+    const result = buildOrderPreview(options);
+    expect(result).toMatchObject({
+      ok: true, can_submit: false, issues: [{ field_id: "target", code: "required" }],
+      preview: { quantity: 5, service_ids: [102, 101], utilities: [
+        { node_id: "rush", inputs: { base_amount: 150 }, advisory_amount: 15 },
+        { node_id: "base_percent", inputs: { base_amount: 150 }, advisory_amount: 15 },
+        { node_id: "all_percent", inputs: { base_amount: 180 }, advisory_amount: 18 },
+      ] },
+      pricing: { service_amounts: { "102": 150, "101": 0 }, base_amount: 150, utility_amount: 48, total_amount: 198 },
+    });
+    if (result.ok) expect(result.snapshot).not.toHaveProperty("pricing");
+    expect(buildOrderPreview({ ...options, state: { ...options.state, values: { quantity: 10 } } }))
+      .toMatchObject({ ok: true, pricing: { base_amount: 300, utility_amount: 96, total_amount: 396 } });
+  });
+
+  it("rejects conflicting or invalid quantity-aware advisory amounts", () => {
+    const options = {
+      definition: definition(), filter_id: "root", services: [service],
+      state: { values: { quantity: 5 }, selections: {} },
+    };
+    expect(buildOrderPreview({ ...options, advisory_service_amounts: { "101": 10 }, advisory_service_amounts_for_quantity: () => ({ "101": 10 }) }))
+      .toMatchObject({ ok: false, kind: "host_configuration", failure: { path: "/advisory_service_amounts" } });
+    expect(buildOrderPreview({ ...options, advisory_service_amounts_for_quantity: () => ({}) }))
+      .toMatchObject({ ok: false, kind: "host_configuration", failure: { path: "/advisory_service_amounts_for_quantity" } });
+    expect(buildOrderPreview({ ...options, advisory_service_amounts_for_quantity: () => ({ "101": Number.NaN }) }))
+      .toMatchObject({ ok: false, kind: "host_configuration", failure: { path: "/advisory_service_amounts_for_quantity" } });
+    expect(buildOrderPreview({ ...options, advisory_service_amounts_for_quantity: () => { throw new Error("bad resolver"); } }))
+      .toMatchObject({ ok: false, kind: "host_configuration", failure: { path: "/advisory_service_amounts_for_quantity" } });
+  });
+
   it("keeps a partial preview without inventing unresolved utility amounts", () => {
     const product = definition();
     product.fields.push(

@@ -58,6 +58,12 @@ The arithmetic is deterministic: flat uses `rate`, per-quantity uses
 `rate × quantity`, per-value uses `rate × resolved value`, and percent uses
 `base amount × rate ÷ 100`. The `all` percent base includes prior advisory
 utility lines in authored selection order.
+Hosts may provide `advisory_service_amounts_for_quantity` to calculate
+quantity-aware service amounts after Ordering resolves quantity and selects the
+primary service. The callback is mutually exclusive with the static
+`advisory_service_amounts` map. `buildOrderPreview` returns a separate advisory
+pricing breakdown for display; these amounts are not added to the portable
+`OrderSnapshot` and never determine the handler's final charge.
 
 ## Toolchain
 
