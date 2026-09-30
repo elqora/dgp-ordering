@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   bindField,
+  buildOrderPreview,
   buildOrderSnapshot,
   createBrowserJavaScriptExpressionExecutor,
   createFormStore,
@@ -190,6 +191,54 @@ describe("customer ordering", () => {
     });
   });
 
+  it("previews quantity and service evidence despite unrelated required input issues", () => {
+    const product = definition();
+    product.fields.push({ id: "target", type: "text", label: "Target URL", name: "target", bind_id: "root", required: true });
+    const options = {
+      definition: product,
+      filter_id: "root",
+      state: { values: { quantity: 100 }, selections: { package: ["premium"] } },
+      services: [service],
+      built_at: "2026-08-03T12:00:00.000Z",
+    };
+    const result = buildOrderPreview(options);
+    expect(result).toMatchObject({
+      ok: true, can_submit: false, issues: [{ field_id: "target", code: "required" }],
+      preview: { quantity: 100, service_ids: [101] },
+      snapshot: { quantity: 100, service_ids: [101] },
+    });
+    expect(buildOrderSnapshot(options)).toMatchObject({ ok: false, kind: "customer_input", issues: [{ field_id: "target", code: "required" }] });
+    expect(buildOrderPreview({ ...options, state: { ...options.state, values: { quantity: 100, target: "https://example.test" } } }))
+      .toMatchObject({ ok: true, can_submit: true });
+  });
+
+  it("keeps a partial preview without inventing unresolved utility amounts", () => {
+    const product = definition();
+    product.fields.push(
+      { id: "units", type: "number", label: "Units", name: "units", bind_id: "root", pricing_role: "utility", utility: { mode: "per_value", rate: 2 } },
+      { id: "all", type: "number", label: "All", bind_id: "root", pricing_role: "utility", utility: { mode: "percent", rate: 10, percent_base: "all" } },
+      { id: "flat", type: "number", label: "Flat", bind_id: "root", pricing_role: "utility", utility: { mode: "flat", rate: 3 } },
+    );
+    const options = {
+      definition: product, filter_id: "root",
+      state: { values: { quantity: 5 }, selections: {} }, services: [service],
+    };
+    expect(buildOrderPreview(options)).toMatchObject({
+      ok: true, snapshot: null, can_submit: false,
+      issues: [{ field_id: "units", code: "utility_value_invalid" }],
+      preview: { quantity: 5, service_ids: [101], utilities: [
+        { node_id: "units", advisory_amount: null },
+        { node_id: "all", advisory_amount: null, inputs: { base_amount: null } },
+        { node_id: "flat", advisory_amount: 3 },
+      ] },
+    });
+    expect(buildOrderSnapshot(options)).toMatchObject({ ok: false, kind: "customer_input", issues: [{ code: "utility_value_invalid" }] });
+    expect(buildOrderPreview({ ...options, state: { ...options.state, values: { quantity: 5, units: 4 } } }))
+      .toMatchObject({ ok: true, can_submit: true, snapshot: { utilities: [
+        { advisory_amount: 8 }, { advisory_amount: 3.3 }, { advisory_amount: 3 },
+      ] } });
+  });
+
   it("never constructs a snapshot after an expression failure", () => {
     const product = definition();
     const quantityField = product.fields[0];
@@ -206,6 +255,8 @@ describe("customer ordering", () => {
     });
     expect(result).toMatchObject({ ok: false, kind: "host_configuration", failure: { code: "expression_result_invalid" } });
     expect("snapshot" in result).toBe(false);
+    expect(buildOrderPreview({ definition: product, filter_id: "root", state: { values: { quantity: 5 }, selections: {} }, services: [service] }))
+      .toMatchObject({ ok: false, kind: "host_configuration", failure: { code: "expression_result_invalid" } });
   });
 
   it("refuses schema-invalid host snapshot configuration", () => {

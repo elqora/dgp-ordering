@@ -40,6 +40,13 @@ Selection resolution starts from fields visible without their own stale
 selection, so hidden option state cannot bootstrap itself back into the active
 context. Host timestamps, bounds, metadata, and advisory inputs are checked
 before construction so successful snapshots remain schema-valid.
+`buildOrderPreview` keeps calculable quantity, service, and utility evidence
+visible while customer fields are incomplete. It reports customer issues and
+`can_submit` separately; only `buildOrderSnapshot` returns a submission-ready
+snapshot. An unresolved per-value utility has a `null` preview amount, as do
+later percentage lines depending on it. The portable `OrderSnapshot` is absent
+until every utility amount is exact. Host-configuration and expression failures
+prevent both preview and snapshot construction.
 Fresh sessions hydrate canonical field defaults, while snapshot-backed sessions
 restore form values by canonical field name and do not overwrite hydrated state
 with those defaults.

@@ -46,6 +46,12 @@ export type BuildOrderSnapshotResult =
       failure: OrderingHostConfigurationFailure;
     };
 
+export type OrderPreviewUtility = Omit<OrderSnapshotUtility, "advisory_amount"> & { advisory_amount: number | null };
+export type OrderPreview = Omit<OrderSnapshot, "utilities"> & { utilities: OrderPreviewUtility[] };
+export type BuildOrderPreviewResult =
+  | { ok: true; preview: OrderPreview; snapshot: OrderSnapshot | null; issues: CustomerInputIssue[]; can_submit: boolean }
+  | { ok: false; kind: "host_configuration"; failure: OrderingHostConfigurationFailure };
+
 export type OrderingHostConfigurationFailure = ExpressionHostConfigurationFailure | {
   kind: "host_configuration";
   code: "ordering_configuration_invalid";
@@ -54,7 +60,7 @@ export type OrderingHostConfigurationFailure = ExpressionHostConfigurationFailur
   meta: ExpressionHostConfigurationFailure["meta"];
 };
 
-function configurationFailure(path: string, message: string): BuildOrderSnapshotResult {
+function configurationFailure(path: string, message: string): BuildOrderPreviewResult {
   return { ok: false, kind: "host_configuration", failure: { kind: "host_configuration", code: "ordering_configuration_invalid", path, message, meta: {} } };
 }
 
@@ -133,7 +139,7 @@ function isDateTime(value: string): boolean {
     && Number.isFinite(Date.parse(value));
 }
 
-export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrderSnapshotResult {
+export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrderPreviewResult {
   const builtAt = options.built_at ?? new Date().toISOString();
   if (!isDateTime(builtAt)) return configurationFailure("/built_at", "The snapshot build timestamp must be a valid date-time string.");
   if (!Number.isFinite(options.host_quantity_default ?? 1) || (options.host_quantity_default ?? 1) <= 0) {
@@ -159,11 +165,10 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
     executor,
     options.mode ?? "prod",
   );
-  if (!customer.ok) {
-    return customer.kind === "host_configuration"
-      ? { ok: false, kind: customer.kind, failure: customer.failure }
-      : { ok: false, kind: customer.kind, issues: customer.issues };
+  if (!customer.ok && customer.kind === "host_configuration") {
+    return { ok: false, kind: "host_configuration", failure: customer.failure };
   }
+  const issues: CustomerInputIssue[] = customer.issues.slice();
   const quantity = resolveQuantity(
     options.definition,
     options.filter_id,
@@ -209,7 +214,7 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
   const chosen = serviceIds.map((id) => catalog.get(serviceKey(id))).filter((service): service is HandlerService => service !== undefined);
   const baseAmounts = serviceIds.map((id) => options.advisory_service_amounts?.[serviceKey(id)] ?? catalog.get(serviceKey(id))?.rate ?? 0);
   const serviceTotal = baseAmounts.reduce((sum, value) => sum + value, 0);
-  const utilities: OrderSnapshotUtility[] = [];
+  const utilities: OrderPreviewUtility[] = [];
   const utilityNodeIds: string[] = [];
   const utilitySeen = new Set<string>();
   for (const fieldId of context.fieldIds) {
@@ -231,25 +236,26 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
     const valueBy = definition.mode === "per_value" ? definition.value_by ?? "value" : undefined;
     const value = definition.mode === "per_value" ? numericUtilityValue(raw, valueBy) : undefined;
     if (definition.mode === "per_value" && value === undefined) {
-      return {
-        ok: false,
-        kind: "customer_input",
-        issues: [{ field_id: resolved.fieldId ?? nodeId, code: "utility_value_invalid", message: "The utility value must resolve to a finite number.", rule_index: null }],
-      };
+      issues.push({ field_id: resolved.fieldId ?? nodeId, code: "utility_value_invalid", message: "The utility value must resolve to a finite number.", rule_index: null });
     }
     let baseAmount: number | null = null;
     if (definition.mode === "percent") {
       baseAmount = definition.percent_base === "base_service"
         ? (baseAmounts[0] ?? 0)
         : definition.percent_base === "all"
-          ? serviceTotal + utilities.reduce((sum, utility) => sum + utility.advisory_amount, 0)
+          ? utilities.some((utility) => utility.advisory_amount === null)
+            ? null
+            : serviceTotal + utilities.reduce((sum, utility) => sum + (utility.advisory_amount ?? 0), 0)
           : serviceTotal;
     }
-    const amount = definition.mode === "flat" ? definition.rate
+    const amount = (definition.mode === "per_value" && value === undefined)
+      || (definition.mode === "percent" && baseAmount === null)
+      ? null
+      : definition.mode === "flat" ? definition.rate
       : definition.mode === "per_quantity" ? definition.rate * quantity.quantity
         : definition.mode === "per_value" ? definition.rate * (value ?? 0)
           : (baseAmount ?? 0) * definition.rate / 100;
-    if (!Number.isFinite(amount)) return configurationFailure(`/utilities/${nodeId}`, "The advisory utility calculation produced a non-finite result.");
+    if (amount !== null && !Number.isFinite(amount)) return configurationFailure(`/utilities/${nodeId}`, "The advisory utility calculation produced a non-finite result.");
     utilities.push({
       node_id: nodeId,
       mode: definition.mode,
@@ -281,33 +287,49 @@ export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrd
   if (!Number.isInteger(minimum) || !Number.isInteger(maximum) || minimum > maximum) {
     return configurationFailure("/min", "Resolved quantity bounds must be integers with min less than or equal to max.");
   }
+  const preview: OrderPreview = {
+    version: ORDER_SNAPSHOT_VERSION,
+    mode: options.mode ?? "prod",
+    built_at: builtAt,
+    product_id: options.definition.id,
+    definition_schema_version: options.definition.schema_version,
+    selection: {
+      filter_id: options.filter_id,
+      trigger_ids: context.triggerIds,
+      fields: context.fieldIds.map((fieldId) => ({
+        field_id: fieldId,
+        field_type: interpreter.index.getField(fieldId)?.type ?? "unknown",
+        selected_option_ids: [...(context.selections[fieldId] ?? [])],
+      })),
+    },
+    inputs: { form, selections: context.selections },
+    quantity: quantity.quantity,
+    quantity_source: quantity.source,
+    min: minimum,
+    max: maximum,
+    service_ids: serviceIds,
+    service_ids_by_node: serviceIdsByNode,
+    fallbacks: options.definition.fallbacks,
+    utilities,
+    meta: options.meta ?? {},
+  };
+  const snapshot: OrderSnapshot | null = utilities.every((utility) => utility.advisory_amount !== null)
+    ? { ...preview, utilities: utilities as OrderSnapshotUtility[] }
+    : null;
   return {
     ok: true,
-    snapshot: {
-      version: ORDER_SNAPSHOT_VERSION,
-      mode: options.mode ?? "prod",
-      built_at: builtAt,
-      product_id: options.definition.id,
-      definition_schema_version: options.definition.schema_version,
-      selection: {
-        filter_id: options.filter_id,
-        trigger_ids: context.triggerIds,
-        fields: context.fieldIds.map((fieldId) => ({
-          field_id: fieldId,
-          field_type: interpreter.index.getField(fieldId)?.type ?? "unknown",
-          selected_option_ids: [...(context.selections[fieldId] ?? [])],
-        })),
-      },
-      inputs: { form, selections: context.selections },
-      quantity: quantity.quantity,
-      quantity_source: quantity.source,
-      min: minimum,
-      max: maximum,
-      service_ids: serviceIds,
-      service_ids_by_node: serviceIdsByNode,
-      fallbacks: options.definition.fallbacks,
-      utilities,
-      meta: options.meta ?? {},
-    },
+    preview,
+    snapshot,
+    issues,
+    can_submit: issues.length === 0 && snapshot !== null,
   };
+}
+
+export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrderSnapshotResult {
+  const result = buildOrderPreview(options);
+  if (!result.ok) return result;
+  if (!result.can_submit || result.snapshot === null) {
+    return { ok: false, kind: "customer_input", issues: result.issues };
+  }
+  return { ok: true, snapshot: result.snapshot };
 }
