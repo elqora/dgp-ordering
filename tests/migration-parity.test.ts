@@ -223,7 +223,7 @@ describe("customer-field validation parity", () => {
     )).toEqual({ ok: true, issues: [] });
   });
 
-  it("supports length/eval subjects, custom output, and one issue per field", () => {
+  it("supports length/eval subjects, custom output, and returns every failing rule", () => {
     const definition = product([field({ validation: [
       { op: "gte", value_by: "length", value: 2, code: "too_short", message: "Too short" },
       {
@@ -232,7 +232,10 @@ describe("customer-field validation parity", () => {
       },
     ] })]);
     expect(validateCustomerInput(definition, "root", { values: { input: "x" }, selections: {} }, [], executor))
-      .toEqual({ ok: false, kind: "customer_input", issues: [{ field_id: "input", code: "too_short", message: "Too short", rule_index: 0 }] });
+      .toEqual({ ok: false, kind: "customer_input", issues: [
+        { field_id: "input", code: "too_short", message: "Too short", rule_index: 0 },
+        { field_id: "input", code: "validation_failed", message: "Input is invalid.", rule_index: 1 },
+      ] });
     expect(validateCustomerInput(definition, "root", { values: { input: "ab" }, selections: {} }, [], executor))
       .toEqual({ ok: true, issues: [] });
   });

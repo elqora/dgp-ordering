@@ -105,7 +105,6 @@ export function validateCustomerInput(
           message: rule.message ?? `${field.label} is invalid.`,
           rule_index: index,
         });
-        break;
       }
     }
   }
