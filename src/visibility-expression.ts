@@ -27,12 +27,12 @@ export function createBrowserVisibilityExpressionExecutor(): VisibilityExpressio
   return {
     execute(expression, preview, path) {
       if (expression === undefined || expression.body.trim() === "") {
-        return failure("expression_source_missing", path, "The visibility expression body is missing.");
+        return failure("expression_source_missing", path, "The visibility expression is missing.");
       }
       try {
-        // Expressions are deliberately trusted host-authored JavaScript function bodies.
+        // Visibility declarations are expressions, evaluated with the provisional preview in scope.
         // eslint-disable-next-line @typescript-eslint/no-implied-eval
-        const evaluate = Function("preview", expression.body) as (preview: unknown) => unknown;
+        const evaluate = Function("preview", `"use strict"; return (\n${expression.body}\n);`) as (preview: unknown) => unknown;
         return { ok: true, value: Boolean(evaluate(preview)) };
       } catch (error) {
         return failure(

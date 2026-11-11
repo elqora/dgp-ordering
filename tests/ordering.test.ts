@@ -116,9 +116,10 @@ describe("trusted browser expressions", () => {
   it("coerces visibility results with JavaScript Boolean semantics", () => {
     const executor = createBrowserVisibilityExpressionExecutor();
     const preview = { service_context: [{ capabilities: { drip_feed: { enabled: true } } }] };
-    expect(executor.execute({ language: "javascript", body: "return preview.service_context[0].capabilities.drip_feed.enabled" }, preview, "/visibility")).toEqual({ ok: true, value: true });
-    expect(executor.execute({ language: "javascript", body: "return 0" }, preview, "/visibility")).toEqual({ ok: true, value: false });
-    expect(executor.execute({ language: "javascript", body: "return []" }, preview, "/visibility")).toEqual({ ok: true, value: true });
+    expect(executor.execute({ language: "javascript", body: "preview.service_context[0].capabilities.drip_feed.enabled" }, preview, "/visibility")).toEqual({ ok: true, value: true });
+    expect(executor.execute({ language: "javascript", body: "0" }, preview, "/visibility")).toEqual({ ok: true, value: false });
+    expect(executor.execute({ language: "javascript", body: "[]" }, preview, "/visibility")).toEqual({ ok: true, value: true });
+    expect(executor.execute({ language: "javascript", body: "return true" }, preview, "/visibility")).toMatchObject({ ok: false, failure: { code: "expression_execution_failed" } });
   });
 });
 
@@ -128,7 +129,7 @@ describe("customer ordering", () => {
     product.filters[0]!.excludes = ["quantity"];
     product.fields[0]!.visibility_expression = {
       language: "javascript",
-      body: "return preview.service_context.some(service => service.capabilities.drip_feed?.enabled === true);",
+      body: "preview.service_context.some(service => service.capabilities.drip_feed?.enabled === true)",
     };
     const serviceWithDripFeed: HandlerService = {
       ...service,
@@ -153,7 +154,7 @@ describe("customer ordering", () => {
   it("lets a field visibility expression hide a field included by other rules", () => {
     const product = definition();
     product.filters[0]!.includes = ["quantity"];
-    product.fields[0]!.visibility_expression = { language: "javascript", body: "return '';" };
+    product.fields[0]!.visibility_expression = { language: "javascript", body: "''" };
     const result = buildOrderPreview({
       definition: product,
       filter_id: "root",
@@ -166,7 +167,7 @@ describe("customer ordering", () => {
 
   it("lets an option visibility expression remove a selected option from the final preview", () => {
     const product = definition();
-    product.fields[1]!.options![0]!.visibility_expression = { language: "javascript", body: "return false;" };
+    product.fields[1]!.options![0]!.visibility_expression = { language: "javascript", body: "false" };
     const result = buildOrderPreview({
       definition: product,
       filter_id: "root",
@@ -180,7 +181,7 @@ describe("customer ordering", () => {
   it("lets a host apply preview-resolved visibility to its live ordering session", () => {
     const product = definition();
     product.filters[0]!.excludes = ["quantity"];
-    product.fields[0]!.visibility_expression = { language: "javascript", body: "return true;" };
+    product.fields[0]!.visibility_expression = { language: "javascript", body: "true" };
     const session = createOrderingSession(product, "root", { values: {}, selections: {} }, undefined, { mode: "dev" });
     expect(session.get_context()?.visibility.fieldIds).not.toContain("quantity");
     const preview = buildOrderPreview({
@@ -202,7 +203,7 @@ describe("customer ordering", () => {
 
   it("returns a host configuration failure without a snapshot when visibility execution throws", () => {
     const product = definition();
-    product.fields[0]!.visibility_expression = { language: "javascript", body: "throw new Error('bad visibility');" };
+    product.fields[0]!.visibility_expression = { language: "javascript", body: "(() => { throw new Error('bad visibility'); })()" };
     expect(buildOrderSnapshot({
       definition: product,
       filter_id: "root",
