@@ -8,6 +8,7 @@ import {
   buildOrderPreview,
   buildOrderSnapshot,
   createBrowserJavaScriptExpressionExecutor,
+  createBrowserVisibilityExpressionExecutor,
   createFormStore,
   createInputRegistry,
   createOrderingSession,
@@ -111,9 +112,106 @@ describe("trusted browser expressions", () => {
       "/x",
     )).toMatchObject({ ok: false, failure: { code: "expression_result_invalid" } });
   });
+
+  it("coerces visibility results with JavaScript Boolean semantics", () => {
+    const executor = createBrowserVisibilityExpressionExecutor();
+    const preview = { service_context: [{ capabilities: { drip_feed: { enabled: true } } }] };
+    expect(executor.execute({ language: "javascript", body: "return preview.service_context[0].capabilities.drip_feed.enabled" }, preview, "/visibility")).toEqual({ ok: true, value: true });
+    expect(executor.execute({ language: "javascript", body: "return 0" }, preview, "/visibility")).toEqual({ ok: true, value: false });
+    expect(executor.execute({ language: "javascript", body: "return []" }, preview, "/visibility")).toEqual({ ok: true, value: true });
+  });
 });
 
 describe("customer ordering", () => {
+  it("uses preview service capabilities for field visibility and exposes the final visibility", () => {
+    const product = definition();
+    product.filters[0]!.excludes = ["quantity"];
+    product.fields[0]!.visibility_expression = {
+      language: "javascript",
+      body: "return preview.service_context.some(service => service.capabilities.drip_feed?.enabled === true);",
+    };
+    const serviceWithDripFeed: HandlerService = {
+      ...service,
+      capabilities: { drip_feed: { id: "drip_feed", enabled: true, description: null, meta: {} } },
+    };
+    const result = buildOrderPreview({
+      definition: product,
+      filter_id: "root",
+      state: { values: { quantity: 5 }, selections: { package: ["premium"] } },
+      services: [serviceWithDripFeed],
+      built_at: "2026-08-03T12:00:00.000Z",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.visibility.fieldIds).toContain("quantity");
+      expect(result.visibility.fieldIds).toContain("package");
+      expect(result.preview.service_context[0]?.capabilities.drip_feed?.enabled).toBe(true);
+      expect(result.snapshot).not.toHaveProperty("service_context");
+    }
+  });
+
+  it("lets a field visibility expression hide a field included by other rules", () => {
+    const product = definition();
+    product.filters[0]!.includes = ["quantity"];
+    product.fields[0]!.visibility_expression = { language: "javascript", body: "return '';" };
+    const result = buildOrderPreview({
+      definition: product,
+      filter_id: "root",
+      state: { values: { quantity: 5 }, selections: { package: ["premium"] } },
+      services: [service],
+      built_at: "2026-08-03T12:00:00.000Z",
+    });
+    expect(result).toMatchObject({ ok: true, visibility: { fieldIds: ["package"] } });
+  });
+
+  it("lets an option visibility expression remove a selected option from the final preview", () => {
+    const product = definition();
+    product.fields[1]!.options![0]!.visibility_expression = { language: "javascript", body: "return false;" };
+    const result = buildOrderPreview({
+      definition: product,
+      filter_id: "root",
+      state: { values: { quantity: 5 }, selections: { package: ["premium", "rush"] } },
+      services: [service],
+      built_at: "2026-08-03T12:00:00.000Z",
+    });
+    expect(result).toMatchObject({ ok: true, visibility: { optionsByFieldId: { package: ["rush"] } }, preview: { inputs: { selections: { package: ["rush"] } } } });
+  });
+
+  it("lets a host apply preview-resolved visibility to its live ordering session", () => {
+    const product = definition();
+    product.filters[0]!.excludes = ["quantity"];
+    product.fields[0]!.visibility_expression = { language: "javascript", body: "return true;" };
+    const session = createOrderingSession(product, "root", { values: {}, selections: {} }, undefined, { mode: "dev" });
+    expect(session.get_context()?.visibility.fieldIds).not.toContain("quantity");
+    const preview = buildOrderPreview({
+      definition: product,
+      filter_id: "root",
+      state: session.store.get(),
+      services: [service],
+      mode: "dev",
+      built_at: "2026-08-03T12:00:00.000Z",
+    });
+    expect(preview.ok).toBe(true);
+    if (preview.ok) {
+      expect(preview.visibility.fieldIds).toContain("quantity");
+      expect(preview.visibility.fieldIds).toContain("package");
+    }
+    if (preview.ok) session.set_visibility_override(preview.visibility);
+    expect(session.get_context()?.visibility.fieldIds).toContain("quantity");
+  });
+
+  it("returns a host configuration failure without a snapshot when visibility execution throws", () => {
+    const product = definition();
+    product.fields[0]!.visibility_expression = { language: "javascript", body: "throw new Error('bad visibility');" };
+    expect(buildOrderSnapshot({
+      definition: product,
+      filter_id: "root",
+      state: { values: { quantity: 5 }, selections: { package: ["premium"] } },
+      services: [service],
+      built_at: "2026-08-03T12:00:00.000Z",
+    })).toMatchObject({ ok: false, kind: "host_configuration", failure: { code: "expression_execution_failed" } });
+  });
+
   it("does not let a stale hidden selection bootstrap its own visibility", () => {
     const product = definition();
     product.filters[0]!.excludes = ["hidden"];

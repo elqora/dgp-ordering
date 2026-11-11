@@ -8,3 +8,4 @@ export * from "./selection.js";
 export * from "./session.js";
 export * from "./snapshot.js";
 export * from "./store.js";
+export * from "./visibility-expression.js";

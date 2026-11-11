@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import type { JsonValue, OrderSnapshot, OrderSnapshotMode, ProductDefinition } from "@elqora/dgp-spec";
-import { createProductInterpreter, fieldOptionIds, type ResolvedProductContext } from "@elqora/dgp-core";
+import { createProductInterpreter, fieldOptionIds, type ResolvedProductContext, type ResolvedVisibility } from "@elqora/dgp-core";
 
 import { bindField, createFormStore, type FieldBinding, type FormStore, type OrderingInputState } from "./store.js";
 import { createInputRegistry, type InputRegistry } from "./registry.js";
@@ -18,6 +18,8 @@ export interface OrderingSession {
   bind_field(field_id: string): FieldBinding;
   set_value(field_id: string, value: JsonValue): void;
   set_selected_option_ids(field_id: string, option_ids: readonly string[]): void;
+  /** Apply a visibility result resolved from the current OrderPreview context. */
+  set_visibility_override(visibility?: ResolvedVisibility): void;
 }
 
 export interface OrderingSessionOptions {
@@ -58,6 +60,10 @@ function sameSelections(left: Readonly<Record<string, readonly string[]>>, right
     const rightValues = right[key] ?? [];
     return leftValues.length === rightValues.length && leftValues.every((value, index) => value === rightValues[index]);
   });
+}
+
+function sameVisibility(left: ResolvedVisibility | undefined, right: ResolvedVisibility | undefined): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 /** Convert canonical snapshot evidence back into field-id keyed headless state. */
@@ -130,6 +136,8 @@ export function createOrderingSession(
   let filterId = initial_filter_id;
   let explicitTriggerIds: string[] = [];
   let activeTriggerIds: string[] = [];
+  let visibilityOverride: ResolvedVisibility | undefined;
+  let currentVisibility: ResolvedVisibility = interpreter.resolveVisibility(filterId, []);
   let priorEffects = new Map<string, ReturnType<typeof interpreter.resolveValueEffects>[number] & { appliedValue: JsonValue }>();
 
   const reconcile = (): void => {
@@ -142,7 +150,10 @@ export function createOrderingSession(
       if (selected.length > 0) requestedSelections[field.id] = selected;
     }
     const values = { ...store.get().values };
-    let resolved = resolveOrderingSelection(definition, filterId, explicitTriggerIds, requestedSelections, { mode });
+    let resolved = resolveOrderingSelection(definition, filterId, explicitTriggerIds, requestedSelections, {
+      mode,
+      ...(visibilityOverride === undefined ? {} : { visibility_override: visibilityOverride }),
+    });
     let previousEffects = priorEffects;
     const effectLimit = definition.fields.length + interpreter.index.triggerIds().length + 2;
     for (let iteration = 0; iteration < effectLimit; iteration += 1) {
@@ -178,7 +189,10 @@ export function createOrderingSession(
           if (previous !== undefined) nextEffects.set(key, previous);
         }
       }
-      const nextResolved = resolveOrderingSelection(definition, filterId, explicitTriggerIds, nextSelections, { mode });
+      const nextResolved = resolveOrderingSelection(definition, filterId, explicitTriggerIds, nextSelections, {
+        mode,
+        ...(visibilityOverride === undefined ? {} : { visibility_override: visibilityOverride }),
+      });
       previousEffects = nextEffects;
       if (sameSelections(resolved.selections, nextResolved.selections)
         && resolved.trigger_ids.length === nextResolved.trigger_ids.length
@@ -189,6 +203,7 @@ export function createOrderingSession(
       resolved = nextResolved;
     }
     activeTriggerIds = resolved.trigger_ids;
+    currentVisibility = resolved.visibility;
     priorEffects = previousEffects;
     store.set({ values, selections: resolved.selections });
   };
@@ -211,7 +226,10 @@ export function createOrderingSession(
     set_filter_id(next) { filterId = next; reconcile(); },
     get_trigger_ids: () => [...activeTriggerIds],
     set_trigger_ids(next) { explicitTriggerIds = unique(next); reconcile(); },
-    get_context: () => interpreter.resolveContext(filterId, activeTriggerIds),
+    get_context: () => {
+      const context = interpreter.resolveContext(filterId, activeTriggerIds);
+      return context === undefined ? undefined : { ...context, visibility: currentVisibility };
+    },
     bind_field(fieldId) {
       const binding = bindField(store, fieldId);
       return {
@@ -222,5 +240,10 @@ export function createOrderingSession(
     },
     set_value: setValue,
     set_selected_option_ids: setSelectedOptionIds,
+    set_visibility_override(visibility) {
+      if (sameVisibility(visibilityOverride, visibility)) return;
+      visibilityOverride = visibility;
+      reconcile();
+    },
   };
 }

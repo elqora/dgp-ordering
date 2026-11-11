@@ -13,13 +13,15 @@ import type {
   UtilityDefinition,
 } from "@elqora/dgp-spec";
 import { ORDER_SNAPSHOT_VERSION } from "@elqora/dgp-spec";
-import { createProductInterpreter, walkFieldOptions } from "@elqora/dgp-core";
+import { createProductInterpreter, walkFieldOptions, type ResolvedVisibility } from "@elqora/dgp-core";
 
 import { validateCustomerInput, type CustomerInputIssue } from "./customer-validation.js";
 import { createBrowserJavaScriptExpressionExecutor, type ExpressionExecutor } from "./expression.js";
 import { resolveQuantity } from "./quantity.js";
 import { resolveOrderingSelection } from "./selection.js";
 import type { OrderingInputState } from "./store.js";
+import { createBrowserVisibilityExpressionExecutor, type VisibilityExpressionExecutor } from "./visibility-expression.js";
+import type { ResolvedOrderingSelection } from "./selection.js";
 
 export interface BuildOrderSnapshotOptions {
   definition: ProductDefinition;
@@ -34,6 +36,7 @@ export interface BuildOrderSnapshotOptions {
   built_at?: string;
   meta?: OrderSnapshot["meta"];
   expression_executor?: ExpressionExecutor;
+  visibility_expression_executor?: VisibilityExpressionExecutor;
   advisory_service_amounts?: Readonly<Record<string, number>>;
   advisory_service_amounts_for_quantity?: (context: AdvisoryServiceAmountContext) => Readonly<Record<string, number>>;
 }
@@ -61,9 +64,13 @@ export type BuildOrderSnapshotResult =
     };
 
 export type OrderPreviewUtility = Omit<OrderSnapshotUtility, "advisory_amount"> & { advisory_amount: number | null };
-export type OrderPreview = Omit<OrderSnapshot, "utilities"> & { utilities: OrderPreviewUtility[] };
+export type OrderPreview = Omit<OrderSnapshot, "utilities"> & {
+  utilities: OrderPreviewUtility[];
+  /** Selected service records, available only to preview-context visibility expressions. */
+  service_context: HandlerService[];
+};
 export type BuildOrderPreviewResult =
-  | { ok: true; preview: OrderPreview; snapshot: OrderSnapshot | null; pricing: AdvisoryPricingPreview; issues: CustomerInputIssue[]; can_submit: boolean }
+  | { ok: true; preview: OrderPreview; snapshot: OrderSnapshot | null; pricing: AdvisoryPricingPreview; issues: CustomerInputIssue[]; can_submit: boolean; visibility: ResolvedVisibility }
   | { ok: false; kind: "host_configuration"; failure: OrderingHostConfigurationFailure };
 
 export type OrderingHostConfigurationFailure = ExpressionHostConfigurationFailure | {
@@ -95,19 +102,20 @@ function pushUnique(target: string[], seen: Set<string>, values: Iterable<string
   for (const value of values) if (!seen.has(value)) { seen.add(value); target.push(value); }
 }
 
-function normalizedContext(options: BuildOrderSnapshotOptions): {
+function normalizedContext(options: BuildOrderSnapshotOptions, resolved?: ResolvedOrderingSelection): {
   triggerIds: string[];
   fieldIds: string[];
   selections: Record<string, string[]>;
+  visibility: ResolvedOrderingSelection["visibility"];
 } {
-  const resolved = resolveOrderingSelection(
+  const result = resolved ?? resolveOrderingSelection(
     options.definition,
     options.filter_id,
     options.trigger_ids ?? [],
     options.state.selections,
     { mode: options.mode ?? "prod" },
   );
-  return { triggerIds: resolved.trigger_ids, fieldIds: resolved.visibility.fieldIds, selections: resolved.selections };
+  return { triggerIds: result.trigger_ids, fieldIds: result.visibility.fieldIds, selections: result.selections, visibility: result.visibility };
 }
 
 function nodeUtility(
@@ -153,7 +161,7 @@ function isDateTime(value: string): boolean {
     && Number.isFinite(Date.parse(value));
 }
 
-export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrderPreviewResult {
+function buildOrderPreviewPass(options: BuildOrderSnapshotOptions, resolved?: ResolvedOrderingSelection): BuildOrderPreviewResult {
   const builtAt = options.built_at ?? new Date().toISOString();
   if (!isDateTime(builtAt)) return configurationFailure("/built_at", "The snapshot build timestamp must be a valid date-time string.");
   if (!Number.isFinite(options.host_quantity_default ?? 1) || (options.host_quantity_default ?? 1) <= 0) {
@@ -173,7 +181,7 @@ export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrde
     return configurationFailure("/filter_id", "The active filter must exist in the published definition.");
   }
   const executor = options.expression_executor ?? createBrowserJavaScriptExpressionExecutor();
-  const context = normalizedContext(options);
+  const context = normalizedContext(options, resolved);
   const customer = validateCustomerInput(
     options.definition,
     options.filter_id,
@@ -344,12 +352,18 @@ export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrde
     max: maximum,
     service_ids: serviceIds,
     service_ids_by_node: serviceIdsByNode,
+    service_context: chosen,
     fallbacks: options.definition.fallbacks,
     utilities,
     meta: options.meta ?? {},
   };
+  if (!isJsonSafe(preview)) return configurationFailure("/service_context", "The provisional preview context must be JSON-compatible.");
   const snapshot: OrderSnapshot | null = utilities.every((utility) => utility.advisory_amount !== null)
-    ? { ...preview, utilities: utilities as OrderSnapshotUtility[] }
+    ? (() => {
+      const { service_context, ...wirePreview } = preview;
+      void service_context;
+      return { ...wirePreview, utilities: utilities as OrderSnapshotUtility[] };
+    })()
     : null;
   const utilityAmount = snapshot === null ? null : utilities.reduce((sum, utility) => sum + (utility.advisory_amount ?? 0), 0);
   const totalAmount = utilityAmount === null ? null : serviceTotal + utilityAmount;
@@ -366,7 +380,28 @@ export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrde
     },
     issues,
     can_submit: issues.length === 0 && snapshot !== null,
+    visibility: context.visibility,
   };
+}
+
+export function buildOrderPreview(options: BuildOrderSnapshotOptions): BuildOrderPreviewResult {
+  const provisional = buildOrderPreviewPass(options);
+  if (!provisional.ok) return provisional;
+  const resolution = resolveOrderingSelection(
+    options.definition,
+    options.filter_id,
+    options.trigger_ids ?? [],
+    options.state.selections,
+    {
+      mode: options.mode ?? "prod",
+      preview: provisional.preview,
+      visibility_expression_executor: options.visibility_expression_executor ?? createBrowserVisibilityExpressionExecutor(),
+    },
+  );
+  if (resolution.configuration_failure !== undefined) {
+    return { ok: false, kind: "host_configuration", failure: resolution.configuration_failure };
+  }
+  return buildOrderPreviewPass(options, resolution);
 }
 
 export function buildOrderSnapshot(options: BuildOrderSnapshotOptions): BuildOrderSnapshotResult {

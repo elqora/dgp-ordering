@@ -10,6 +10,7 @@ import type {
   JsonValue,
   ProductDefinition,
   ProductField,
+  VisibilityExpressionConformanceSuite,
 } from "@elqora/dgp-spec";
 import { Ajv } from "ajv";
 import addFormatsModule, { type FormatsPlugin } from "ajv-formats";
@@ -18,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOrderSnapshot,
   createBrowserJavaScriptExpressionExecutor,
+  createBrowserVisibilityExpressionExecutor,
   createInputRegistry,
   createOrderingSession,
   createOrderingSessionFromSnapshot,
@@ -131,6 +133,22 @@ describe("portable browser-expression conformance", () => {
       else expect(result).toMatchObject({ ok: false, failure: { code: fixture.expected.failure_code } });
     }
   });
+});
+
+describe("portable visibility-expression conformance", () => {
+  const fixturePath = fileURLToPath(import.meta.resolve(
+    "@elqora/dgp-spec/fixtures/semantic/visibility-expression-execution.json",
+  ));
+  const suite = JSON.parse(readFileSync(fixturePath, "utf8")) as VisibilityExpressionConformanceSuite;
+  const executor = createBrowserVisibilityExpressionExecutor();
+
+  for (const fixture of suite.cases) {
+    it(`executes ${fixture.id}`, () => {
+      const result = executor.execute(fixture.expression ?? undefined, fixture.preview, "/fixture");
+      if (fixture.expected.ok) expect(result).toEqual({ ok: true, value: fixture.expected.value });
+      else expect(result).toMatchObject({ ok: false, failure: { code: fixture.expected.failure_code } });
+    });
+  }
 });
 
 describe("quantity parity", () => {
